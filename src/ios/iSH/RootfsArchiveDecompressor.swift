@@ -72,7 +72,10 @@ enum RootfsArchiveDecompressor {
     /// becomes Swift `throws`), so we `try` and re-wrap any error here.
     private static func xzDecompress(_ data: Data) throws -> Data {
         do {
-            guard let out = try LZMAWrapper.decompressXZ(data), !out.isEmpty else {
+            // Imported as throwing: on failure it throws (NSError** -> throws),
+            // on success returns a non-optional Data.
+            let out = try LZMAWrapper.decompressXZ(data)
+            guard !out.isEmpty else {
                 throw RootfsArchiveError.decompressFailed("empty result")
             }
             return out
