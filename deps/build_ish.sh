@@ -256,8 +256,8 @@ build_ish() {
             -Dlog="" \
             -Dlog_handler=nslog \
             -Dkernel=ish \
-            -Dengine=asbestos \
-            -Dguest_arch=arm64
+            -Dengine=jit \
+            -Dguest_archs=arm64
     else
         log_info "Meson already configured, reconfiguring..."
         meson configure "$BUILD_DIR" --buildtype="$MESON_BUILDTYPE"
@@ -267,9 +267,10 @@ build_ish() {
     log_info "Building with ninja..."
     ninja -C "$BUILD_DIR" libish.a libish_emu.a libfakefs.a
 
-    # Also build VDSO (arm64 guest VDSO is at vdso/arm64/libvdso.so.elf)
+    # Also build the VDSO (i386-linux ELF shared lib; ish-AOK emits it at
+    # vdso/libvdso.so.elf, some forks at vdso/arm64/libvdso.so.elf).
     log_info "Building VDSO..."
-    ninja -C "$BUILD_DIR" vdso/arm64/libvdso.so.elf || log_warning "VDSO build failed (may need LLVM)"
+    ninja -C "$BUILD_DIR" vdso || log_warning "VDSO build failed (may need LLVM)"
 
     cd "$SCRIPT_DIR"
     log_success "iSH libraries built successfully"
@@ -421,9 +422,11 @@ create_umbrella_header() {
 #include "kernel/task.h"
 #include "kernel/calls.h"
 #include "kernel/fs.h"
-#include "kernel/memory.h"
 #include "kernel/signal.h"
 #include "kernel/errno.h"
+
+// Memory (ish-AOK keeps the memory API in emu/)
+#include "emu/memory.h"
 
 // File System
 #include "fs/fd.h"
