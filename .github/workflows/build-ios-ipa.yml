@@ -74,6 +74,9 @@ jobs:
       - name: Build iSH libraries
         run: ./deps/build_ish.sh
 
+      - name: Build liblzma (xz support)
+        run: ./deps/build_lzma.sh
+
       - name: Prepare Alpine rootfs
         run: ./deps/prepare_alpine_rootfs.sh
 

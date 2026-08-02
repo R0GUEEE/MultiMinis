@@ -38,6 +38,7 @@
 		AA26CCBC2F324FE400AECF2D /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA26CCBB2F324FE400AECF2D /* FileBrowserView.swift */; };
 		AA26CCBE2F31080100AECF2D /* RootfsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA26CCBF2F31080100AECF2D /* RootfsManager.swift */; };
 		E5TAR0001 /* TarArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TAR0002 /* TarArchive.swift */; };
+		E5XZ0001 /* LZMAWrapper.m in Sources */ = {isa = PBXBuildFile; fileRef = E5XZ0002 /* LZMAWrapper.m */; };
 		E5TAR0003 /* RootfsArchiveDecompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TAR0004 /* RootfsArchiveDecompressor.swift */; };
 		E5TAR0005 /* RootfsImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TAR0006 /* RootfsImportView.swift */; };
 		AA26CCC12F31090000AECF2D /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA26CCC22F31090000AECF2D /* SystemConfiguration.framework */; };
@@ -633,6 +634,8 @@
 		AA26CCBD2F31080100AECF2D /* ISHTerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ISHTerminalView.swift; sourceTree = "<group>"; };
 		AA26CCBF2F31080100AECF2D /* RootfsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsManager.swift; sourceTree = "<group>"; };
 		E5TAR0002 /* TarArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TarArchive.swift; sourceTree = "<group>"; };
+		E5XZ0002 /* LZMAWrapper.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LZMAWrapper.m; sourceTree = "<group>"; };
+		E5XZ0004 /* LZMAWrapper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LZMAWrapper.h; sourceTree = "<group>"; };
 		E5TAR0004 /* RootfsArchiveDecompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsArchiveDecompressor.swift; sourceTree = "<group>"; };
 		E5TAR0006 /* RootfsImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsImportView.swift; sourceTree = "<group>"; };
 		AA26CCC02F31080100AECF2D /* ISHKernel.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ISHKernel.h; sourceTree = "<group>"; };
@@ -1503,6 +1506,8 @@
 				E55000012 /* ISHShellExecutor.m */,
 				AA26CCBF2F31080100AECF2D /* RootfsManager.swift */,
 				E5TAR0002 /* TarArchive.swift */,
+				E5XZ0002 /* LZMAWrapper.m */,
+				E5XZ0004 /* LZMAWrapper.h */,
 				E5TAR0004 /* RootfsArchiveDecompressor.swift */,
 				AA26CCB62F31067900AECF2D /* alpine-rootfs.zip */,
 				AA0838D32F3B941A00049557 /* RootfsPatch.bundle */,
@@ -2503,6 +2508,7 @@
 				AA0838C32F3B941A00049557 /* RootfsManagementView.swift in Sources */,
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				E5TAR0001 /* TarArchive.swift in Sources */,
+				E5XZ0001 /* LZMAWrapper.m in Sources */,
 				E5TAR0003 /* RootfsArchiveDecompressor.swift in Sources */,
 				E5TAR0005 /* RootfsImportView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
@@ -3206,6 +3212,7 @@
 					"-lish_emu",
 					"-lish",
 					"-lfakefs",
+					"-llzma",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.r0gueee.multiminis;
@@ -3261,6 +3268,7 @@
 					"-lish_emu",
 					"-lish",
 					"-lfakefs",
+					"-llzma",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.r0gueee.multiminis;

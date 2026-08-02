@@ -41,8 +41,11 @@
 // Signal/exception handler — captures crash stacks to disk for next-launch report.
 #import "CrashSignalHandler.h"
 
-// Safe KVC wrapper — @try/@catch for private WebKit preference keys.
+// SAFE KVC wrapper — @try/@catch for private WebKit preference keys.
 #import "SafeKVCSetTrue.h"
+
+// XZ (.tar.xz) rootfs decompression via liblzma
+#import "LZMAWrapper.h"
 
 // NSFileHandle write wrapper that catches NSException (avoids process abort
 // when the reader thread hits a closed pipe / invalid fd / full disk).

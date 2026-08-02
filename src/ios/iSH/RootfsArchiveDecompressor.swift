@@ -23,13 +23,15 @@ enum RootfsArchiveError: Error, LocalizedError {
     case readFailed
     case inflateFailed
     case emptyInput
+    case decompressFailed(String)
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedFormat: return "Unsupported archive format (only .tar and .tar.gz currently supported)."
+        case .unsupportedFormat: return "Unsupported archive format (only .tar, .tar.gz, .tar.xz supported)."
         case .readFailed: return "Could not read the archive file."
         case .inflateFailed: return "Failed to decompress the archive."
         case .emptyInput: return "The archive is empty."
+        case .decompressFailed(let m): return "Decompression failed: \(m)"
         }
     }
 }
@@ -58,10 +60,20 @@ enum RootfsArchiveDecompressor {
             return DecompressedTarData(data: try gunzip(raw), wasCompressed: true)
         }
         // xz magic FD 37 7A 58 5A 00
-        if raw.count >= 6, raw[0] == 0xFD, raw[1] == 0x37, raw[2] == 0x7A {
-            throw RootfsArchiveError.unsupportedFormat
+        if raw.count >= 6, raw[0] == 0xFD, raw[1] == 0x37, raw[2] == 0x7A,
+           raw.count >= 6, raw[3] == 0x58, raw[4] == 0x5A, raw[5] == 0x00 {
+            return DecompressedTarData(data: try xzDecompress(raw), wasCompressed: true)
         }
         return DecompressedTarData(data: raw, wasCompressed: false)
+    }
+
+    /// Decompress a .tar.xz stream via liblzma (see LZMAWrapper).
+    private static func xzDecompress(_ data: Data) throws -> Data {
+        var err: NSError?
+        guard let out = LZMAWrapper.decompressXZ(data, error: &err), !out.isEmpty else {
+            throw RootfsArchiveError.decompressFailed(err?.localizedDescription ?? "xz")
+        }
+        return out
     }
 
     /// Decompress a gzip member. Uses compression_decode_buffer (the same
