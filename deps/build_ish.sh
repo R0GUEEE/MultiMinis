@@ -267,10 +267,11 @@ build_ish() {
     log_info "Building with ninja..."
     ninja -C "$BUILD_DIR" libish.a libish_emu.a libfakefs.a
 
-    # Also build the VDSO (i386-linux ELF shared lib; ish-AOK emits it at
-    # vdso/libvdso.so.elf, some forks at vdso/arm64/libvdso.so.elf).
-    log_info "Building VDSO..."
-    ninja -C "$BUILD_DIR" vdso || log_warning "VDSO build failed (may need LLVM)"
+    # The VDSO is already built transitively: libish.a links `vdso` (see
+    # deps/ish/meson.build: kernel/vdso.c depends on the vdso custom_target),
+    # so the ninja lib target above produced vdso/libvdso.so.elf. No separate
+    # VDSO target exists in ish-AOK to invoke by name.
+    log_info "VDSO is built as part of libish (kernel/vdso.c dep); skipping separate step"
 
     cd "$SCRIPT_DIR"
     log_success "iSH libraries built successfully"
