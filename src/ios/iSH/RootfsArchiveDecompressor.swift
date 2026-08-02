@@ -68,12 +68,17 @@ enum RootfsArchiveDecompressor {
     }
 
     /// Decompress a .tar.xz stream via liblzma (see LZMAWrapper).
+    /// LZMAWrapper.decompressXZ is imported as throwing (its NSError** param
+    /// becomes Swift `throws`), so we `try` and re-wrap any error here.
     private static func xzDecompress(_ data: Data) throws -> Data {
-        var err: NSError?
-        guard let out = LZMAWrapper.decompressXZ(data, error: &err), !out.isEmpty else {
-            throw RootfsArchiveError.decompressFailed(err?.localizedDescription ?? "xz")
+        do {
+            guard let out = try LZMAWrapper.decompressXZ(data), !out.isEmpty else {
+                throw RootfsArchiveError.decompressFailed("empty result")
+            }
+            return out
+        } catch let e as NSError {
+            throw RootfsArchiveError.decompressFailed(e.localizedDescription)
         }
-        return out
     }
 
     /// Decompress a gzip member. Uses compression_decode_buffer (the same
