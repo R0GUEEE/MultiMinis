@@ -140,8 +140,8 @@ build_fakefsify() {
             --buildtype=release \
             -Dlog="" \
             -Dkernel=ish \
-            -Dengine=asbestos \
-            -Dguest_arch=arm64
+            -Dengine=jit \
+            -Dguest_archs=arm64
     fi
 
     # Build only fakefsify
