@@ -4,5 +4,5 @@
 	branch = master
 [submodule "deps/ish"]
 	path = deps/ish
-	url = https://github.com/emkey1/ish-AOK.git
-	branch = working
+	url = https://github.com/R0GUEEE/ish-AOK-multi.git
+	branch = port/native-offload
