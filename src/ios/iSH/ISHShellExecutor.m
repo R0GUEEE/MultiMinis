@@ -530,7 +530,7 @@ static dispatch_once_t _onceToken;
 
 + (BOOL)killProcess:(int)pid withSignal:(int)signal {
     struct siginfo_ info = SIGINFO_NIL;
-    lock(&pids_lock);
+    lock(&pids_lock, 0);
     struct task *task = pid_get_task((dword_t)pid);
     if (task) {
         send_signal(task, signal, info);
@@ -573,7 +573,7 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     }
     struct siginfo_ info = SIGINFO_NIL;
 
-    lock(&pids_lock);
+    lock(&pids_lock, 0);
     struct task *rootTask = pid_get_task((dword_t)pid);
     pid_t_ pgid = 0;
     if (rootTask) {
@@ -604,7 +604,7 @@ static BOOL ISHTaskIsDescendantOf(struct task *t, pid_t_ rootPid) {
     struct task *capturedRoot = rootTask;
     pid_t_ capturedPgid = pgid;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(200 * NSEC_PER_MSEC)), dispatch_get_global_queue(0, 0), ^{
-        lock(&pids_lock);
+        lock(&pids_lock, 0);
         // Verify the pid still maps to the same task struct we saw earlier.
         // pid_get_task returns NULL once task_destroy unlinks the task, and
         // a different pointer if the pid slot has been reused. Either way
