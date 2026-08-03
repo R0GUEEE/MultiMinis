@@ -60,9 +60,8 @@
         }
         // Real error.
         if (error) {
-            const char *msg = lzma_strerror(ret);
             *error = [NSError errorWithDomain:@"LZMAWrapper" code:(int)ret
-                                     userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"XZ decode failed (%@): %s", @(ret), msg ?: "unknown"]}];
+                                     userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"XZ decode failed (code %d).", (int)ret]}];
         }
         return nil;
     }
