@@ -257,7 +257,7 @@ build_ish() {
             -Dlog_handler=nslog \
             -Dkernel=ish \
             -Dengine=jit \
-            -Dguest_archs=arm64
+            -Dguest_archs=arm64,amd64,i386
     else
         log_info "Meson already configured, reconfiguring..."
         meson configure "$BUILD_DIR" --buildtype="$MESON_BUILDTYPE"
