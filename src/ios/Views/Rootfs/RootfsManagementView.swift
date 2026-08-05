@@ -9,6 +9,7 @@ import SwiftUI
 
 struct RootfsManagementView: View {
     @StateObject private var viewModel = RootfsManagementViewModel()
+    @StateObject private var importModel = RootfsImportViewModel()
     @State private var showFileBrowser = false
 
     var body: some View {
@@ -63,6 +64,9 @@ struct RootfsManagementView: View {
 
                 MirrorsSectionView()
             }
+
+            // ---- Import any rootfs.tar.gz and load it (multi-distro) ----
+            RootfsImportSection(model: importModel)
 
             Section("Actions") {
                 if !viewModel.isInstalled {
@@ -159,6 +163,7 @@ struct RootfsManagementView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.refresh()
+            importModel.refresh()
         }
         .alert("Reset Rootfs?", isPresented: $viewModel.showResetConfirmation) {
             Button("Cancel", role: .cancel) {}
@@ -179,6 +184,96 @@ struct RootfsManagementView: View {
         .sheet(isPresented: $showFileBrowser) {
             NavigationStack {
                 FileBrowserView(rootPath: RootfsManager.shared.dataPath, rootLabel: "/")
+            }
+        }
+        .sheet(isPresented: $importModel.presentPicker) {
+            RootfsDocumentPicker { url in
+                importModel.startImport(of: url)
+            }
+            .ignoresSafeArea()
+        }
+        .onChange(of: importModel.requestRelaunch) { _, needsRelaunch in
+            guard needsRelaunch else { return }
+            viewModel.refresh()
+        }
+    }
+}
+
+// MARK: - Reusable section: import any rootfs.tar.gz and manage profiles.
+// Rendered inside RootfsManagementView's List as a dedicated menu section.
+
+struct RootfsImportSection: View {
+    @ObservedObject var model: RootfsImportViewModel
+
+    var body: some View {
+        Section("Distributions") {
+            Text("Import any mini-rootfs tarball (.tar.gz / .tgz / .tar / .tar.xz) to add another Linux distribution, or switch between installed ones.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if model.profiles.isEmpty {
+                Text("No imported rootfs yet")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(model.profiles, id: \.self) { name in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name)
+                                .fontWeight(model.active == name ? .semibold : .regular)
+                            if model.active == name {
+                                Text("Active — booted on next launch")
+                                    .font(.caption2)
+                                    .foregroundColor(.green)
+                            }
+                        }
+                        Spacer()
+                        if model.active == name {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        } else {
+                            Button("Load") {
+                                model.switchProfile(to: name)
+                            }
+                            .font(.caption)
+                            .buttonStyle(.bordered)
+                        }
+                        if name != "alpine-rootfs" && model.active != name {
+                            Button(role: .destructive) {
+                                model.deleteProfile(name)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+
+            Button {
+                model.presentPicker = true
+            } label: {
+                Label {
+                    Text(model.isImporting ? "Importing…" : "Import rootfs (tar.gz)")
+                } icon: {
+                    Image(systemName: model.isImporting ? "arrow.triangle.2.circlepath" : "square.and.arrow.down")
+                }
+            }
+            .disabled(model.isImporting)
+
+            if model.isImporting {
+                HStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(model.importStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if let message = model.message {
+                Text(message.text)
+                    .font(.callout)
+                    .foregroundColor(message.isError ? .red : .green)
             }
         }
     }

@@ -182,14 +182,16 @@ class RootfsImportViewModel: ObservableObject {
             do {
                 let staged = try RootfsImportViewModel.stageFile(from: url)
                 let base = url.deletingPathExtension().lastPathComponent
+                // activate = true: importing also loads (switches active profile)
+                // so the new rootfs becomes the one booted next launch.
                 let name = try RootfsManager.shared.importFromTarGz(sourceURL: staged,
                                                                     displayName: base,
-                                                                    activate: false)
+                                                                    activate: true)
                 try? FileManager.default.removeItem(at: staged)
                 await MainActor.run {
                     self.isImporting = false
                     self.refresh()
-                    self.message = (text: "✅ Imported rootfs '\(name)'. Switch to it and relaunch to boot.", isError: false)
+                    self.message = (text: "✅ Imported & loaded rootfs '\(name)'. Restart the app to boot it.", isError: false)
                 }
             } catch {
                 await MainActor.run {
