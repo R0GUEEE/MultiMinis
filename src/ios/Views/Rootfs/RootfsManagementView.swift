@@ -192,7 +192,7 @@ struct RootfsManagementView: View {
             }
             .ignoresSafeArea()
         }
-        .onChange(of: importModel.requestRelaunch) { _, needsRelaunch in
+        .onChange(of: importModel.requestRelaunch) { needsRelaunch in
             guard needsRelaunch else { return }
             viewModel.refresh()
         }
