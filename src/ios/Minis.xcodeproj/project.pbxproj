@@ -3236,6 +3236,8 @@
 					"-llzma",
 					"-larchive",
 					"-lxml2",
+					"-lbz2",
+					"-liconv",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.r0gueee.multiminis;
@@ -3295,6 +3297,8 @@
 					"-llzma",
 					"-larchive",
 					"-lxml2",
+					"-lbz2",
+					"-liconv",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.r0gueee.multiminis;
