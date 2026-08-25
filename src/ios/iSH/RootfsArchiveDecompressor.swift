@@ -10,9 +10,10 @@
 //    - gzip (RFC 1952)   -> decompressed via the Compression framework
 //    - plain .tar        -> passed through
 //
-//  Apple's Compression framework decodes both the zlib and gzip wrappers for
-//  the COMPRESSION_ZLIB algorithm, so a full gzip member (including its
-//  header) can be passed straight to compression_decode_buffer.
+//  Apple's Compression framework's COMPRESSION_ZLIB decoder handles RAW
+//  DEFLATE (as used by zip entries) — it does NOT understand the gzip
+//  wrapper, so gzip members are parsed here and their DEFLATE payloads are
+//  decoded directly.
 //
 
 import Foundation
@@ -84,25 +85,60 @@ enum RootfsArchiveDecompressor {
         }
     }
 
-    /// Decompress a gzip member. Uses compression_decode_buffer (the same
-    /// primitive the app already uses for zip entries), growing the output
-    /// buffer until the whole member decodes. COMPRESSION_ZLIB decodes the
-    /// gzip wrapper transparently.
+    /// Decompress a gzip member. Apple's Compression framework COMPRESSION_ZLIB
+    /// decoder expects a RAW DEFLATE stream (the zip extractor proves this) —
+    /// it does NOT understand the gzip wrapper. Feeding it the whole gzip
+    /// file (as the previous implementation did) always fails with
+    /// "Failed to decompress the archive". So we parse the gzip header
+    /// ourselves, locate the DEFLATE payload, and decode that.
     private static func gunzip(_ data: Data) throws -> Data {
-        var capacity = max(data.count * 4, 1 << 20) // start generously
+        guard data.count >= 18,
+              data[0] == 0x1f, data[1] == 0x8b, data[2] == 0x08 else {
+            throw RootfsArchiveError.decompressFailed("Not a gzip stream")
+        }
+
+        // gzip member header: magic(2) CM(1) FLG(1) MTIME(4) XFL(1) OS(1) = 10 bytes
+        let flg = data[3]
+        var p = 10
+
+        if flg & 0x04 != 0 { // FEXTRA — 2-byte length + extra field
+            guard p + 2 <= data.count else {
+                throw RootfsArchiveError.decompressFailed("Truncated gzip header")
+            }
+            let xlen = Int(data[p]) | (Int(data[p + 1]) << 8)
+            p += 2 + xlen
+        }
+        if flg & 0x08 != 0 { // FNAME — NUL-terminated
+            while p < data.count, data[p] != 0 { p += 1 }
+            p += 1
+        }
+        if flg & 0x10 != 0 { // FCOMMENT — NUL-terminated
+            while p < data.count, data[p] != 0 { p += 1 }
+            p += 1
+        }
+        if flg & 0x02 != 0 { p += 2 } // FHCRC — 2 bytes
+
+        guard p < data.count else {
+            throw RootfsArchiveError.decompressFailed("Truncated gzip stream")
+        }
+        // The 8-byte trailer (CRC32 + ISIZE) is not part of the deflate stream.
+        let trailer = min(8, data.count - p)
+        let payload = data.subdata(in: p ..< (data.count - trailer))
+
+        var capacity = max(payload.count * 4, 1 << 20) // start generously
         var output = Data(count: capacity)
         var produced = -1
 
-        // Grow the destination buffer until the gzip member fits. Rootfs
+        // Grow the destination buffer until the deflate stream fits. Rootfs
         // archives can expand many times, so don't assume a fixed size.
         for _ in 0..<24 {
             let r = output.withUnsafeMutableBytes { dstPtr -> Int in
-                data.withUnsafeBytes { srcPtr -> Int in
+                payload.withUnsafeBytes { srcPtr -> Int in
                     compression_decode_buffer(
                         dstPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
                         capacity,
                         srcPtr.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                        data.count,
+                        payload.count,
                         nil,
                         COMPRESSION_ZLIB)
                 }

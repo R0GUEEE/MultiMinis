@@ -202,6 +202,112 @@ extension Data {
     }
 }
 
+// MARK: - Accessory bar (keyboard toolbar) buttons
+
+/// Built-in buttons for the quick-command bar shown above the software
+/// keyboard inside the terminal.
+enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
+    case keyboardToggle, paste, escape, tab, enter, ctrl
+    case arrowUp, arrowDown, arrowLeft, arrowRight
+    case ctrlC, ctrlD, ctrlZ
+    case files, rootfs
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .keyboardToggle: return "Show / Hide keyboard"
+        case .paste: return "Paste"
+        case .escape: return "Escape (Esc)"
+        case .tab: return "Tab"
+        case .enter: return "Enter (CR)"
+        case .ctrl: return "Sticky Ctrl"
+        case .arrowUp: return "Up arrow"
+        case .arrowDown: return "Down arrow"
+        case .arrowLeft: return "Left arrow"
+        case .arrowRight: return "Right arrow"
+        case .ctrlC: return "Ctrl+C (SIGINT)"
+        case .ctrlD: return "Ctrl+D (EOF)"
+        case .ctrlZ: return "Ctrl+Z (SIGTSTP)"
+        case .files: return "File browser"
+        case .rootfs: return "Rootfs management"
+        }
+    }
+
+    var defaultTitle: String {
+        switch self {
+        case .keyboardToggle: return "Hide"
+        case .paste: return "Paste"
+        case .escape: return "Esc"
+        case .tab: return "Tab"
+        case .enter: return "\u{23CE}"
+        case .ctrl: return "Ctrl"
+        case .arrowUp: return "\u{2191}"
+        case .arrowDown: return "\u{2193}"
+        case .arrowLeft: return "\u{2190}"
+        case .arrowRight: return "\u{2192}"
+        case .ctrlC: return "C-c"
+        case .ctrlD: return "C-d"
+        case .ctrlZ: return "C-z"
+        case .files: return "Files"
+        case .rootfs: return "Rootfs"
+        }
+    }
+
+    var defaultIcon: String {
+        switch self {
+        case .keyboardToggle: return "keyboard"
+        case .paste: return "doc.on.clipboard"
+        case .escape: return "escape"
+        case .tab: return "arrow.right.to.line"
+        case .enter: return "return"
+        case .ctrl: return "control"
+        case .arrowUp: return "chevron.up"
+        case .arrowDown: return "chevron.down"
+        case .arrowLeft: return "chevron.left"
+        case .arrowRight: return "chevron.right"
+        case .ctrlC: return "xmark.circle"
+        case .ctrlD: return "eject"
+        case .ctrlZ: return "pause.circle"
+        case .files: return "folder"
+        case .rootfs: return "gear"
+        }
+    }
+}
+
+/// A single button in the keyboard toolbar. Either a built-in kind (whose
+/// behavior is fixed but can be hidden / reordered) or a fully custom
+/// button (title + SF Symbol + any shortcut action).
+struct AccessoryBarButton: Identifiable, Codable, Hashable {
+    var id: UUID
+    var kind: AccessoryButtonKind?
+    var title: String
+    var icon: String
+    var action: KeyboardShortcutAction?
+    /// False hides the button from the toolbar without deleting it.
+    var enabled: Bool
+
+    var isCustom: Bool { kind == nil }
+
+    init(kind: AccessoryButtonKind, enabled: Bool = true) {
+        self.id = UUID()
+        self.kind = kind
+        self.title = kind.defaultTitle
+        self.icon = kind.defaultIcon
+        self.action = nil
+        self.enabled = enabled
+    }
+
+    init(id: UUID = UUID(), title: String, icon: String, action: KeyboardShortcutAction, enabled: Bool = true) {
+        self.id = id
+        self.kind = nil
+        self.title = title
+        self.icon = icon
+        self.action = action
+        self.enabled = enabled
+    }
+}
+
 // MARK: - Settings store
 
 /// Centralised, UserDefaults-backed configuration for terminal keyboard
@@ -242,6 +348,15 @@ final class KeyboardShortcutSettings: ObservableObject {
         }
     }
 
+    /// Ordered, visible-or-hidden list of keyboard toolbar buttons.
+    @Published var accessoryButtons: [AccessoryBarButton] {
+        didSet {
+            guard accessoryButtons != oldValue else { return }
+            saveAccessoryButtons()
+            notifyChanged()
+        }
+    }
+
     /// Default shortcuts shipped with the app. ⌘V pastes, ⌘C sends Ctrl-C
     /// (SIGINT) like a desktop terminal, ⌘L clears the screen.
     static let defaultBindings: [KeyboardShortcutBinding] = [
@@ -265,6 +380,11 @@ final class KeyboardShortcutSettings: ObservableObject {
         ),
     ]
 
+    /// Default keyboard toolbar: every built-in button, in the classic order.
+    static let defaultAccessoryButtons: [AccessoryBarButton] = {
+        AccessoryButtonKind.allCases.map { AccessoryBarButton(kind: $0) }
+    }()
+
     // MARK: - Init
 
     private init() {
@@ -274,6 +394,12 @@ final class KeyboardShortcutSettings: ObservableObject {
             bindings = decoded
         } else {
             bindings = Self.defaultBindings
+        }
+        if let data = ud.data(forKey: Keys.accessoryButtons),
+           let decoded = try? JSONDecoder().decode([AccessoryBarButton].self, from: data) {
+            accessoryButtons = decoded
+        } else {
+            accessoryButtons = Self.defaultAccessoryButtons
         }
         ctrlSendsControlCodes = ud.object(forKey: Keys.ctrlSendsControlCodes) as? Bool ?? true
         altSendsEsc = ud.object(forKey: Keys.altSendsEsc) as? Bool ?? true
@@ -296,9 +422,15 @@ final class KeyboardShortcutSettings: ObservableObject {
 
     func restoreDefaults() {
         bindings = Self.defaultBindings
+        accessoryButtons = Self.defaultAccessoryButtons
         ctrlSendsControlCodes = true
         altSendsEsc = true
         backspaceSendsDel = true
+    }
+
+    /// Restore just the keyboard toolbar to the built-in default layout.
+    func restoreDefaultAccessoryButtons() {
+        accessoryButtons = Self.defaultAccessoryButtons
     }
 
     // MARK: - Persistence
@@ -306,6 +438,12 @@ final class KeyboardShortcutSettings: ObservableObject {
     private func saveBindings() {
         if let data = try? JSONEncoder().encode(bindings) {
             UserDefaults.standard.set(data, forKey: Keys.bindings)
+        }
+    }
+
+    private func saveAccessoryButtons() {
+        if let data = try? JSONEncoder().encode(accessoryButtons) {
+            UserDefaults.standard.set(data, forKey: Keys.accessoryButtons)
         }
     }
 
@@ -324,6 +462,7 @@ final class KeyboardShortcutSettings: ObservableObject {
 
     private enum Keys {
         static let bindings = "keyboardShortcuts.bindings"
+        static let accessoryButtons = "keyboardShortcuts.accessoryButtons"
         static let ctrlSendsControlCodes = "keyboardShortcuts.ctrlSendsControlCodes"
         static let altSendsEsc = "keyboardShortcuts.altSendsEsc"
         static let backspaceSendsDel = "keyboardShortcuts.backspaceSendsDel"

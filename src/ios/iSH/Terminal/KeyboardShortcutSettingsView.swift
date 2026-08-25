@@ -5,11 +5,45 @@
 //  Settings screen for configuring terminal keyboard shortcuts:
 //  - list / add / edit / delete custom shortcuts
 //  - record a hardware key combination, then choose what it does
+//  - show / hide / reorder the keyboard toolbar (top bar) buttons and
+//    add fully custom toolbar buttons
 //  - options for the built-in Ctrl / Alt / Backspace behavior
 //
 
 import SwiftUI
 import UIKit
+
+// MARK: - Shared action kind
+
+/// What a shortcut / toolbar button sends. Shared by both editors.
+fileprivate enum ActionKind: String, CaseIterable, Identifiable {
+    case controlCode, sendText, sendHex, paste, toggleKeyboard, clearScreen
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .controlCode: return "Control character"
+        case .sendText: return "Send text"
+        case .sendHex: return "Send hex bytes"
+        case .paste: return "Paste from clipboard"
+        case .toggleKeyboard: return "Toggle keyboard"
+        case .clearScreen: return "Clear screen"
+        }
+    }
+}
+
+/// Builds the KeyboardShortcutAction matching the current ActionKind + payload state.
+fileprivate func makeAction(kind: ActionKind, controlByte: UInt8, textPayload: String, hexPayload: String) -> KeyboardShortcutAction {
+    switch kind {
+    case .controlCode: return .controlCode(controlByte)
+    case .sendText: return .sendText(textPayload)
+    case .sendHex: return .sendHex(hexPayload)
+    case .paste: return .paste
+    case .toggleKeyboard: return .toggleKeyboard
+    case .clearScreen: return .clearScreen
+    }
+}
 
 // MARK: - Settings screen
 
@@ -17,6 +51,7 @@ import UIKit
 struct KeyboardShortcutSettingsView: View {
     @ObservedObject private var settings = KeyboardShortcutSettings.shared
     @State private var editor: EditorState?
+    @State private var accessoryEditor: AccessoryEditorState?
 
     /// Which editor sheet is presented (or none).
     enum EditorState: Identifiable {
@@ -34,6 +69,26 @@ struct KeyboardShortcutSettingsView: View {
             switch self {
             case .add: return nil
             case .edit(let binding): return binding
+            }
+        }
+    }
+
+    /// Which custom-toolbar-button editor sheet is presented (or none).
+    enum AccessoryEditorState: Identifiable {
+        case add
+        case edit(AccessoryBarButton)
+
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .edit(let button): return button.id.uuidString
+            }
+        }
+
+        var existingButton: AccessoryBarButton? {
+            switch self {
+            case .add: return nil
+            case .edit(let button): return button
             }
         }
     }
@@ -88,6 +143,60 @@ struct KeyboardShortcutSettingsView: View {
             }
 
             Section {
+                ForEach(settings.accessoryButtons.indices, id: \.self) { index in
+                    let button = settings.accessoryButtons[index]
+                    HStack {
+                        Image(systemName: button.icon)
+                            .frame(width: 28)
+                            .foregroundStyle(.secondary)
+                        Text(button.kind?.displayName ?? button.title)
+                        Spacer()
+                        if let action = button.action {
+                            Text(action.displayName)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        if button.isCustom {
+                            Button {
+                                accessoryEditor = .edit(button)
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.footnote)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        Toggle("", isOn: $settings.accessoryButtons[index].enabled)
+                            .labelsHidden()
+                    }
+                }
+                .onMove { from, to in
+                    settings.accessoryButtons.move(fromOffsets: from, toOffset: to)
+                }
+                .onDelete { indexSet in
+                    // Built-ins are hidden via their toggle instead; only
+                    // custom buttons are actually removed here.
+                    let customIDs = indexSet.compactMap { idx -> UUID? in
+                        settings.accessoryButtons[idx].isCustom ? settings.accessoryButtons[idx].id : nil
+                    }
+                    settings.accessoryButtons.removeAll { customIDs.contains($0.id) }
+                }
+
+                Button {
+                    accessoryEditor = .add
+                } label: {
+                    Label("Add Custom Button", systemImage: "plus.circle.fill")
+                }
+
+                Button("Restore Default Toolbar") {
+                    settings.restoreDefaultAccessoryButtons()
+                }
+            } header: {
+                Text("Toolbar Buttons")
+            } footer: {
+                Text("The quick-command bar above the keyboard. Toggle buttons on or off, drag to reorder (Edit), or add custom buttons that send anything.")
+            }
+
+            Section {
                 Button("Restore Default Shortcuts") {
                     settings.restoreDefaults()
                 }
@@ -97,6 +206,11 @@ struct KeyboardShortcutSettingsView: View {
         }
         .navigationTitle("Keyboard Shortcuts")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                EditButton()
+            }
+        }
         .sheet(item: $editor) { state in
             NavigationStack {
                 BindingEditorView(existing: state.existingBinding) { newBinding in
@@ -104,6 +218,17 @@ struct KeyboardShortcutSettingsView: View {
                         settings.bindings[index] = newBinding
                     } else {
                         settings.bindings.append(newBinding)
+                    }
+                }
+            }
+        }
+        .sheet(item: $accessoryEditor) { state in
+            NavigationStack {
+                AccessoryButtonEditorView(existing: state.existingButton) { newButton in
+                    if let index = settings.accessoryButtons.firstIndex(where: { $0.id == newButton.id }) {
+                        settings.accessoryButtons[index] = newButton
+                    } else {
+                        settings.accessoryButtons.append(newButton)
                     }
                 }
             }
@@ -130,23 +255,6 @@ private struct BindingEditorView: View {
     @State private var controlByte: UInt8 = 3
     @State private var textPayload = ""
     @State private var hexPayload = ""
-
-    enum ActionKind: String, CaseIterable, Identifiable {
-        case controlCode, sendText, sendHex, paste, toggleKeyboard, clearScreen
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .controlCode: return "Control character"
-            case .sendText: return "Send text"
-            case .sendHex: return "Send hex bytes"
-            case .paste: return "Paste from clipboard"
-            case .toggleKeyboard: return "Toggle keyboard"
-            case .clearScreen: return "Clear screen"
-            }
-        }
-    }
 
     private var hexValid: Bool {
         hexPayload.isEmpty || Data(hexString: hexPayload) != nil
@@ -223,39 +331,12 @@ private struct BindingEditorView: View {
 
             // MARK: Action
             Section {
-                Picker("Action", selection: $actionKind) {
-                    ForEach(ActionKind.allCases) { kind in
-                        Text(kind.label).tag(kind)
-                    }
-                }
-
-                switch actionKind {
-                case .controlCode:
-                    Picker("Character", selection: $controlByte) {
-                        ForEach(1...26, id: \.self) { byte in
-                            let letter = controlLetter(for: byte)
-                            Text("Ctrl-\(letter)  (0x\(String(byte, radix: 16).uppercased()))")
-                                .tag(UInt8(byte))
-                        }
-                    }
-                case .sendText:
-                    TextField("e.g. exit⏎", text: $textPayload)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                case .sendHex:
-                    TextField("e.g. 1b5b44", text: $hexPayload)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if !hexValid {
-                        Text("Invalid hex — use byte pairs like 1b 5b 44")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                case .paste, .toggleKeyboard, .clearScreen:
-                    Text(actionKind.label)
-                        .foregroundStyle(.secondary)
-                }
+                ActionEditorFields(
+                    actionKind: $actionKind,
+                    controlByte: $controlByte,
+                    textPayload: $textPayload,
+                    hexPayload: $hexPayload
+                )
             } header: {
                 Text("Action")
             } footer: {
@@ -311,28 +392,209 @@ private struct BindingEditorView: View {
     }
 
     private func save() {
-        let action: KeyboardShortcutAction
-        switch actionKind {
-        case .controlCode:
-            action = .controlCode(controlByte)
-        case .sendText:
-            action = .sendText(textPayload)
-        case .sendHex:
-            action = .sendHex(hexPayload)
-        case .paste:
-            action = .paste
-        case .toggleKeyboard:
-            action = .toggleKeyboard
-        case .clearScreen:
-            action = .clearScreen
-        }
         let binding = KeyboardShortcutBinding(
             id: existing?.id ?? UUID(),
             input: input,
             modifierFlags: flags,
-            action: action
+            action: makeAction(kind: actionKind, controlByte: controlByte, textPayload: textPayload, hexPayload: hexPayload)
         )
         onSave(binding)
+        dismiss()
+    }
+}
+
+// MARK: - Reusable action fields
+
+/// Action picker + payload inputs, shared by the shortcut editor and the
+/// custom toolbar button editor.
+private struct ActionEditorFields: View {
+    @Binding var actionKind: ActionKind
+    @Binding var controlByte: UInt8
+    @Binding var textPayload: String
+    @Binding var hexPayload: String
+
+    private var hexValid: Bool {
+        hexPayload.isEmpty || Data(hexString: hexPayload) != nil
+    }
+
+    var body: some View {
+        Picker("Action", selection: $actionKind) {
+            ForEach(ActionKind.allCases) { kind in
+                Text(kind.label).tag(kind)
+            }
+        }
+
+        switch actionKind {
+        case .controlCode:
+            Picker("Character", selection: $controlByte) {
+                ForEach(1...26, id: \.self) { byte in
+                    let letter = controlLetter(for: byte)
+                    Text("Ctrl-\(letter)  (0x\(String(byte, radix: 16).uppercased()))")
+                        .tag(UInt8(byte))
+                }
+            }
+        case .sendText:
+            TextField("e.g. exit⏎", text: $textPayload)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        case .sendHex:
+            TextField("e.g. 1b5b44", text: $hexPayload)
+                .font(.system(.body, design: .monospaced))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !hexValid {
+                Text("Invalid hex — use byte pairs like 1b 5b 44")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        case .paste, .toggleKeyboard, .clearScreen:
+            Text(actionKind.label)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func controlLetter(for byte: Int) -> String {
+        guard byte >= 1 && byte <= 26, let scalar = UnicodeScalar(0x40 + byte) else { return "?" }
+        return String(scalar)
+    }
+}
+
+// MARK: - Custom toolbar button editor
+
+/// Editor sheet for creating or modifying a custom keyboard toolbar button.
+private struct AccessoryButtonEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let existing: AccessoryBarButton?
+    var onSave: (AccessoryBarButton) -> Void
+
+    @State private var title = ""
+    @State private var icon = "keyboard"
+    @State private var actionKind: ActionKind = .controlCode
+    @State private var controlByte: UInt8 = 3
+    @State private var textPayload = ""
+    @State private var hexPayload = ""
+
+    private static let suggestedIcons = [
+        "keyboard", "doc.on.clipboard", "escape", "return", "control",
+        "chevron.up", "chevron.down", "chevron.left", "chevron.right",
+        "xmark.circle", "eject", "pause.circle", "folder", "gear",
+        "terminal", "paintbrush", "arrow.clockwise", "paperplane",
+    ]
+
+    private var canSave: Bool {
+        !title.isEmpty && !icon.isEmpty
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Button label", text: $title)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("SF Symbol name", text: $icon)
+                    .font(.system(.body, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                HStack {
+                    Image(systemName: icon)
+                        .frame(width: 28)
+                        .foregroundStyle(.secondary)
+                    Text("Preview")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    QuickCommandButton(label: title.isEmpty ? "Btn" : title, icon: icon) {}
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.suggestedIcons, id: \.self) { name in
+                            Button {
+                                icon = name
+                            } label: {
+                                Image(systemName: name)
+                                    .frame(width: 32, height: 32)
+                                    .background(icon == name ? Color.accentColor.opacity(0.25) : Color.clear,
+                                                in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(icon == name ? Color.accentColor : .primary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            } header: {
+                Text("Button")
+            } footer: {
+                Text("The label and icon appear in the quick-command bar above the keyboard.")
+            }
+
+            Section {
+                ActionEditorFields(
+                    actionKind: $actionKind,
+                    controlByte: $controlByte,
+                    textPayload: $textPayload,
+                    hexPayload: $hexPayload
+                )
+            } header: {
+                Text("Action")
+            } footer: {
+                if actionKind == .sendHex {
+                    Text("Bytes are sent raw to the terminal. Example: 1b 5b 44 = ESC [ D (left arrow).")
+                }
+            }
+
+            Section {
+                Button("Save") {
+                    save()
+                }
+                .disabled(!canSave)
+
+                Button("Cancel", role: .cancel) {
+                    dismiss()
+                }
+            }
+        }
+        .navigationTitle(existing == nil ? "New Toolbar Button" : "Edit Toolbar Button")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: loadExisting)
+    }
+
+    private func loadExisting() {
+        guard let existing else { return }
+        title = existing.title
+        icon = existing.icon
+        guard let action = existing.action else {
+            actionKind = .controlCode
+            return
+        }
+        switch action {
+        case .controlCode(let byte):
+            actionKind = .controlCode
+            controlByte = byte
+        case .sendText(let text):
+            actionKind = .sendText
+            textPayload = text
+        case .sendHex(let hex):
+            actionKind = .sendHex
+            hexPayload = hex
+        case .paste:
+            actionKind = .paste
+        case .toggleKeyboard:
+            actionKind = .toggleKeyboard
+        case .clearScreen:
+            actionKind = .clearScreen
+        }
+    }
+
+    private func save() {
+        let button = AccessoryBarButton(
+            id: existing?.id ?? UUID(),
+            title: title,
+            icon: icon,
+            action: makeAction(kind: actionKind, controlByte: controlByte, textPayload: textPayload, hexPayload: hexPayload),
+            enabled: existing?.enabled ?? true
+        )
+        onSave(button)
         dismiss()
     }
 }

@@ -99,6 +99,9 @@ struct ISHTerminalView: View {
                     guard let text = UIPasteboard.general.string, !text.isEmpty,
                           let data = text.data(using: .utf8) else { return }
                     viewModel.sendInput(data)
+                },
+                onClearScreen: {
+                    viewModel.clearScreen()
                 }
             )
         }
