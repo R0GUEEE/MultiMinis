@@ -284,26 +284,33 @@ private struct TerminalSessionContent: View {
                 exitedOverlay
             }
         }
-        // Accessory bar is pinned above the keyboard via safeAreaInset.
-        // It moves with the keyboard but does NOT affect the terminal's frame.
+        // Accessory bar is pinned above the keyboard via safeAreaInset and
+        // only appears while the software keyboard is visible — like iSH-AOK's
+        // inputAccessoryView, it travels with the keyboard instead of being
+        // stuck to the bottom of the screen. Tap the terminal to bring both
+        // back.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            TerminalKeyboardAccessory(
-                onInput: { data in viewModel.sendInput(data) },
-                ctrlActive: $ctrlActive,
-                onShowFileBrowser: onShowFileBrowser,
-                onShowRootfsManagement: onShowRootfsManagement,
-                keyboardActive: $keyboardActive,
-                softwareKeyboardVisible: softwareKeyboardVisible,
-                onPaste: {
-                    guard let text = UIPasteboard.general.string, !text.isEmpty,
-                          let data = text.data(using: .utf8) else { return }
-                    viewModel.sendInput(data)
-                },
-                onClearScreen: {
-                    viewModel.clearScreen()
-                }
-            )
+            if softwareKeyboardVisible {
+                TerminalKeyboardAccessory(
+                    onInput: { data in viewModel.sendInput(data) },
+                    ctrlActive: $ctrlActive,
+                    onShowFileBrowser: onShowFileBrowser,
+                    onShowRootfsManagement: onShowRootfsManagement,
+                    keyboardActive: $keyboardActive,
+                    softwareKeyboardVisible: softwareKeyboardVisible,
+                    onPaste: {
+                        guard let text = UIPasteboard.general.string, !text.isEmpty,
+                              let data = text.data(using: .utf8) else { return }
+                        viewModel.sendInput(data)
+                    },
+                    onClearScreen: {
+                        viewModel.clearScreen()
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.easeOut(duration: 0.18), value: softwareKeyboardVisible)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
             let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
             TerminalRedrawLog.log("keyboardWillShow endFrame=\(end) active=\(keyboardActive)")
@@ -706,16 +713,18 @@ struct QuickCommandButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 if !icon.isEmpty {
                     Image(systemName: icon)
                         .font(.caption)
                 }
                 Text(label)
                     .font(.caption)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
             .background(backgroundColor, in: RoundedRectangle(cornerRadius: 5))
             .foregroundStyle(foregroundColor)
             .overlay(

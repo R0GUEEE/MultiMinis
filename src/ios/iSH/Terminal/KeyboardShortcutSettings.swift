@@ -208,6 +208,9 @@ extension Data {
 /// keyboard inside the terminal.
 enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
     case keyboardToggle, paste, escape, tab, enter, ctrl
+    case arrows
+    // Legacy per-direction arrow kinds (kept so persisted layouts still
+    // decode; migrated to `.arrows` on load).
     case arrowUp, arrowDown, arrowLeft, arrowRight
     case ctrlC, ctrlD, ctrlZ
     case dash, dot, slash, colon, bang, pipe
@@ -224,6 +227,7 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
         case .tab: return "Tab"
         case .enter: return "Enter (CR)"
         case .ctrl: return "Sticky Ctrl"
+        case .arrows: return "Arrow keys (drag)"
         case .arrowUp: return "Up arrow"
         case .arrowDown: return "Down arrow"
         case .arrowLeft: return "Left arrow"
@@ -251,6 +255,7 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
         case .tab: return "Tab"
         case .enter: return "\u{23CE}"
         case .ctrl: return "Ctrl"
+        case .arrows: return "Arrows"
         case .arrowUp: return "\u{2191}"
         case .arrowDown: return "\u{2193}"
         case .arrowLeft: return "\u{2190}"
@@ -278,6 +283,7 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
         case .tab: return "arrow.right.to.line"
         case .enter: return "return"
         case .ctrl: return "control"
+        case .arrows: return "arrow.up.and.down.and.arrow.left.and.right"
         case .arrowUp: return "chevron.up"
         case .arrowDown: return "chevron.down"
         case .arrowLeft: return "chevron.left"
@@ -403,9 +409,17 @@ final class KeyboardShortcutSettings: ObservableObject {
         ),
     ]
 
-    /// Default keyboard toolbar: every built-in button, in the classic order.
+    /// Default keyboard toolbar layout (ish-AOK style order): control keys on
+    /// the left, punctuation in the center, utilities on the right.
+    static let defaultAccessoryKinds: [AccessoryButtonKind] = [
+        .keyboardToggle, .paste, .escape, .tab, .enter, .ctrl, .arrows,
+        .ctrlC, .ctrlD, .ctrlZ, .dash, .dot, .slash, .colon, .bang, .pipe,
+        .numberRow, .files, .rootfs,
+    ]
+
+    /// Default keyboard toolbar: every default kind, in the classic order.
     static let defaultAccessoryButtons: [AccessoryBarButton] = {
-        AccessoryButtonKind.allCases.map { AccessoryBarButton(kind: $0) }
+        defaultAccessoryKinds.map { AccessoryBarButton(kind: $0) }
     }()
 
     // MARK: - Init
@@ -420,11 +434,16 @@ final class KeyboardShortcutSettings: ObservableObject {
         }
         if let data = ud.data(forKey: Keys.accessoryButtons),
            let decoded = try? JSONDecoder().decode([AccessoryBarButton].self, from: data) {
-            // Migration: append built-in kinds added by app updates (e.g. the
-            // ish-AOK punctuation keys) that aren't in the persisted layout.
-            let existingKinds = Set(decoded.compactMap { $0.kind })
-            var merged = decoded
-            for kind in AccessoryButtonKind.allCases where !existingKinds.contains(kind) {
+            // Migration: strip the legacy per-direction arrow buttons (they
+            // were combined into a single drag-direction key) and append any
+            // built-in kinds added by app updates.
+            let legacyArrowKinds: Set<AccessoryButtonKind> = [.arrowUp, .arrowDown, .arrowLeft, .arrowRight]
+            var merged = decoded.filter { button in
+                guard let kind = button.kind else { return true }
+                return !legacyArrowKinds.contains(kind)
+            }
+            let existingKinds = Set(merged.compactMap { $0.kind })
+            for kind in Self.defaultAccessoryKinds where !existingKinds.contains(kind) {
                 merged.append(AccessoryBarButton(kind: kind))
             }
             accessoryButtons = merged
