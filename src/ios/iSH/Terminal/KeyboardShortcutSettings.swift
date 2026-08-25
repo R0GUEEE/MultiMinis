@@ -210,6 +210,8 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
     case keyboardToggle, paste, escape, tab, enter, ctrl
     case arrowUp, arrowDown, arrowLeft, arrowRight
     case ctrlC, ctrlD, ctrlZ
+    case dash, dot, slash, colon, bang, pipe
+    case numberRow
     case files, rootfs
 
     var id: String { rawValue }
@@ -229,6 +231,13 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
         case .ctrlC: return "Ctrl+C (SIGINT)"
         case .ctrlD: return "Ctrl+D (EOF)"
         case .ctrlZ: return "Ctrl+Z (SIGTSTP)"
+        case .dash: return "Hyphen (-)"
+        case .dot: return "Period (.)"
+        case .slash: return "Slash (/)"
+        case .colon: return "Colon (:)"
+        case .bang: return "Exclamation (!)"
+        case .pipe: return "Pipe (|)"
+        case .numberRow: return "Number row (123)"
         case .files: return "File browser"
         case .rootfs: return "Rootfs management"
         }
@@ -249,6 +258,13 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
         case .ctrlC: return "C-c"
         case .ctrlD: return "C-d"
         case .ctrlZ: return "C-z"
+        case .dash: return "-"
+        case .dot: return "."
+        case .slash: return "/"
+        case .colon: return ":"
+        case .bang: return "!"
+        case .pipe: return "|"
+        case .numberRow: return "123"
         case .files: return "Files"
         case .rootfs: return "Rootfs"
         }
@@ -269,6 +285,13 @@ enum AccessoryButtonKind: String, Codable, CaseIterable, Identifiable {
         case .ctrlC: return "xmark.circle"
         case .ctrlD: return "eject"
         case .ctrlZ: return "pause.circle"
+        case .dash: return "minus"
+        case .dot: return "circle.fill"
+        case .slash: return "forward.slash"
+        case .colon: return "character.textbox"
+        case .bang: return "exclamationmark"
+        case .pipe: return "line.diagonal"
+        case .numberRow: return "number"
         case .files: return "folder"
         case .rootfs: return "gear"
         }
@@ -397,7 +420,14 @@ final class KeyboardShortcutSettings: ObservableObject {
         }
         if let data = ud.data(forKey: Keys.accessoryButtons),
            let decoded = try? JSONDecoder().decode([AccessoryBarButton].self, from: data) {
-            accessoryButtons = decoded
+            // Migration: append built-in kinds added by app updates (e.g. the
+            // ish-AOK punctuation keys) that aren't in the persisted layout.
+            let existingKinds = Set(decoded.compactMap { $0.kind })
+            var merged = decoded
+            for kind in AccessoryButtonKind.allCases where !existingKinds.contains(kind) {
+                merged.append(AccessoryBarButton(kind: kind))
+            }
+            accessoryButtons = merged
         } else {
             accessoryButtons = Self.defaultAccessoryButtons
         }

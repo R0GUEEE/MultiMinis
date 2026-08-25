@@ -39,21 +39,47 @@ struct TerminalKeyboardAccessory: View {
 
     @ObservedObject private var settings = KeyboardShortcutSettings.shared
 
+    /// Whether the "123" toggle is on — shows the extra number/symbol row
+    /// above the main toolbar (iSH-AOK style).
+    @State private var showNumberRow = false
+
     var body: some View {
+        VStack(spacing: 4) {
+            if showNumberRow {
+                numberRow
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(settings.accessoryButtons.filter(\.enabled)) { button in
+                        if let kind = button.kind {
+                            builtInButton(kind)
+                        } else {
+                            customButton(button)
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Color(white: 0.12))
+    }
+
+    /// Fixed second row of number / symbol keys shown when the "123" toggle
+    /// is on — characters a shell user reaches for constantly.
+    private var numberRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(settings.accessoryButtons.filter(\.enabled)) { button in
-                    if let kind = button.kind {
-                        builtInButton(kind)
-                    } else {
-                        customButton(button)
+            HStack(spacing: 6) {
+                ForEach(Array("1234567890-=[]\\;',./"), id: \.self) { char in
+                    QuickCommandButton(label: String(char), icon: "") {
+                        onInput(String(char).data(using: .utf8) ?? Data())
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
         }
-        .background(Color(white: 0.12))
     }
 
     // MARK: - Button rendering
@@ -136,6 +162,38 @@ struct TerminalKeyboardAccessory: View {
         case .ctrlZ:
             QuickCommandButton(label: "C-z", icon: "pause.circle") {
                 onInput(Data([0x1A])) // Ctrl+Z
+            }
+
+        // Center punctuation keys (iSH-AOK style)
+        case .dash:
+            QuickCommandButton(label: "-", icon: "minus") {
+                onInput(Data("-".utf8))
+            }
+        case .dot:
+            QuickCommandButton(label: ".", icon: "circle.fill") {
+                onInput(Data(".".utf8))
+            }
+        case .slash:
+            QuickCommandButton(label: "/", icon: "forward.slash") {
+                onInput(Data("/".utf8))
+            }
+        case .colon:
+            QuickCommandButton(label: ":", icon: "character.textbox") {
+                onInput(Data(":".utf8))
+            }
+        case .bang:
+            QuickCommandButton(label: "!", icon: "exclamationmark") {
+                onInput(Data("!".utf8))
+            }
+        case .pipe:
+            QuickCommandButton(label: "|", icon: "line.diagonal") {
+                onInput(Data("|".utf8))
+            }
+
+        case .numberRow:
+            // Toggles the extra number/symbol row above the toolbar.
+            QuickCommandButton(label: "123", icon: "number", isActive: showNumberRow) {
+                showNumberRow.toggle()
             }
 
         case .files:

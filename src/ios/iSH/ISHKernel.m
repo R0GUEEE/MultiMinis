@@ -7,6 +7,7 @@
 
 #import "ISHKernel.h"
 #import "CurrentRoot.h"
+#import "ISHShellExecutor.h"
 #include "ish/kernel/init.h"
 #include "ish/kernel/task.h"
 #include "ish/kernel/calls.h"
@@ -61,9 +62,25 @@
 
 NSNotificationName const ISHProcessExitedNotification = @"ISHProcessExited";
 NSNotificationName const ISHTerminalOutputNotification = @"ISHTerminalOutput";
+NSNotificationName const ISHTerminalCreatedNotification = @"ISHTerminalCreated";
+NSNotificationName const ISHTerminalExitedNotification = @"ISHTerminalExited";
 
 // Global reference to shared instance for C callbacks
 static ISHKernel *g_sharedKernel = nil;
+
+// ---------------------------------------------------------------------------
+// Per-terminal (tab) bookkeeping. Guarded by g_terminalLock.
+//   g_terminalHandlesByTTY:        @(tty pointer)        -> @(handle)
+//   g_terminalTTYByHandle:         @(handle)             -> @(tty pointer)
+//   g_terminalCallbacksByHandle:   @(handle)             -> ISHOutputCallback
+//   g_terminalPidsByHandle:        @(handle)             -> @(guest shell pid)
+// ---------------------------------------------------------------------------
+static pthread_mutex_t g_terminalLock = PTHREAD_MUTEX_INITIALIZER;
+static NSMutableDictionary<NSNumber *, NSNumber *> *g_terminalHandlesByTTY;
+static NSMutableDictionary<NSNumber *, NSNumber *> *g_terminalTTYByHandle;
+static NSMutableDictionary<NSNumber *, ISHOutputCallback> *g_terminalCallbacksByHandle;
+static NSMutableDictionary<NSNumber *, NSNumber *> *g_terminalPidsByHandle;
+static int g_nextTerminalHandle = 1;
 
 // External hooks
 extern void (*exit_hook)(struct task *task, int code);
@@ -227,6 +244,20 @@ static int ish_tty_write(struct tty *tty, const void *buf, size_t len, bool bloc
     if (len == 0) return 0;
 
     NSData *data = [NSData dataWithBytes:buf length:len];
+
+    // Route output to the per-terminal callback if this tty belongs to a
+    // terminal created via startNewTerminalWithOutputCallback:.
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *handleNum = g_terminalHandlesByTTY[@((uintptr_t)tty)];
+    ISHOutputCallback terminalCallback = handleNum ? g_terminalCallbacksByHandle[handleNum] : nil;
+    pthread_mutex_unlock(&g_terminalLock);
+    if (terminalCallback) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            terminalCallback(data);
+        });
+        return (int)len;
+    }
+
     NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -288,6 +319,29 @@ static void handle_process_exit(struct task *task, int code) {
             object:nil
             userInfo:@{@"pid": @(pid), @"code": @(code)}];
     });
+
+    // If this task was a terminal (tab) shell, notify the tab layer too.
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *exitedHandle = nil;
+    for (NSNumber *handleNum in [g_terminalPidsByHandle allKeys]) {
+        NSNumber *pidNum = g_terminalPidsByHandle[handleNum];
+        if (pidNum.intValue == pid) {
+            exitedHandle = handleNum;
+            break;
+        }
+    }
+    if (exitedHandle) {
+        [g_terminalPidsByHandle removeObjectForKey:exitedHandle];
+    }
+    pthread_mutex_unlock(&g_terminalLock);
+    if (exitedHandle) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:ISHTerminalExitedNotification
+                object:nil
+                userInfo:@{@"handle": exitedHandle, @"pid": @(pid), @"code": @(code)}];
+        });
+    }
 }
 
 #pragma mark - ISHKernel Implementation
@@ -820,6 +874,205 @@ static void handle_process_exit(struct task *task, int code) {
 
     NSLog(@"ISHKernel: Shell launch initiated: %@", command[0]);
     return 0;
+}
+
+#pragma mark - Multiple terminals (tabs)
+
+- (int)startNewTerminalWithOutputCallback:(ISHOutputCallback)callback {
+    if (!_isBooted) {
+        NSLog(@"ISHKernel: startNewTerminal skipped — kernel not booted");
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_terminalLock);
+    if (g_terminalHandlesByTTY == nil) {
+        g_terminalHandlesByTTY = [NSMutableDictionary new];
+        g_terminalTTYByHandle = [NSMutableDictionary new];
+        g_terminalCallbacksByHandle = [NSMutableDictionary new];
+        g_terminalPidsByHandle = [NSMutableDictionary new];
+    }
+    int handle = g_nextTerminalHandle++;
+    if (callback) {
+        g_terminalCallbacksByHandle[@(handle)] = [callback copy];
+    }
+    pthread_mutex_unlock(&g_terminalLock);
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        // Become a fresh child of init so this shell survives independently.
+        int err = become_new_init_child();
+        if (err < 0) {
+            NSLog(@"ISHKernel: terminal %d: become_new_init_child failed: %d", handle, err);
+            return;
+        }
+        int shellPid = current->pid;
+
+        // Fresh pseudo-terminal for this shell (same pattern as executeCommand).
+        struct tty *tty = pty_open_fake(&ish_pty_driver);
+        if (IS_ERR(tty)) {
+            NSLog(@"ISHKernel: terminal %d: pty_open_fake failed: %ld", handle, PTR_ERR(tty));
+            return;
+        }
+
+        // Publish tty -> handle BEFORE create_stdio so any early output
+        // from the shell is routed to this terminal's callback.
+        pthread_mutex_lock(&g_terminalLock);
+        g_terminalHandlesByTTY[@((uintptr_t)tty)] = @(handle);
+        g_terminalTTYByHandle[@(handle)] = @((uintptr_t)tty);
+        g_terminalPidsByHandle[@(handle)] = @(shellPid);
+        pthread_mutex_unlock(&g_terminalLock);
+
+        struct winsize_ winsize = {.row = 24, .col = 200, .xpixel = 0, .ypixel = 0};
+        tty_set_winsize(tty, winsize);
+
+        NSString *stdioFile = [NSString stringWithFormat:@"/dev/pts/%d", tty->num];
+        err = create_stdio(stdioFile.fileSystemRepresentation, TTY_PSEUDO_SLAVE_MAJOR, tty->num);
+        if (err < 0) {
+            NSLog(@"ISHKernel: terminal %d: create_stdio failed: %d", handle, err);
+            return;
+        }
+
+        // argv: "/bin/sh" "-l"
+        char argv[64];
+        size_t pos = 0;
+        const char *shPath = "/bin/sh";
+        size_t len = strlen(shPath) + 1;
+        memcpy(argv + pos, shPath, len);
+        pos += len;
+        const char *loginFlag = "-l";
+        len = strlen(loginFlag) + 1;
+        memcpy(argv + pos, loginFlag, len);
+        pos += len;
+        argv[pos] = '\0'; // double-NUL terminate
+
+        // Environment: mirror executeCommand's set so tabs behave identically.
+        char envp_buf[8192];
+        size_t envp_pos = 0;
+
+#define TERM_ENVP_APPEND(s) do { \
+    const char *_s = (s); \
+    size_t _len = strlen(_s) + 1; \
+    if (envp_pos + _len < sizeof(envp_buf) - 256) { \
+        memcpy(envp_buf + envp_pos, _s, _len); \
+        envp_pos += _len; \
+    } \
+} while(0)
+
+        TERM_ENVP_APPEND("TERM=xterm-256color");
+        TERM_ENVP_APPEND("HOME=/root");
+        TERM_ENVP_APPEND("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bin");
+        TERM_ENVP_APPEND("LANG=C.UTF-8");
+        TERM_ENVP_APPEND("CHARSET=UTF-8");
+        TERM_ENVP_APPEND("ENV=/etc/profile");
+        TERM_ENVP_APPEND("BROWSER=/usr/local/bin/minis-open");
+        {
+            NSTimeZone *tz = [NSTimeZone systemTimeZone];
+            NSInteger secs = tz.secondsFromGMT;
+            NSInteger hrs  = secs / 3600;
+            NSInteger mins = labs(secs % 3600) / 60;
+            NSString *posixTZ;
+            if (mins != 0) {
+                posixTZ = [NSString stringWithFormat:@"LCL%+ld:%02ld", (long)-hrs, (long)mins];
+            } else {
+                posixTZ = [NSString stringWithFormat:@"LCL%+ld", (long)-hrs];
+            }
+            NSString *tzEnv = [NSString stringWithFormat:@"TZ=%@", posixTZ];
+            TERM_ENVP_APPEND(tzEnv.UTF8String);
+        }
+        TERM_ENVP_APPEND("GODEBUG=asyncpreemptoff=1");
+        TERM_ENVP_APPEND("GOMAXPROCS=2");
+        TERM_ENVP_APPEND("NO_COLOR=1");
+        TERM_ENVP_APPEND("PYTHONMALLOC=malloc");
+        TERM_ENVP_APPEND("PYTHONDONTWRITEBYTECODE=1");
+
+        NSDictionary<NSString *, NSString *> *customEnv = self->_customEnvironment;
+        if (customEnv) {
+            for (NSString *key in customEnv) {
+                NSString *entry = [NSString stringWithFormat:@"%@=%@", key, customEnv[key]];
+                TERM_ENVP_APPEND(entry.UTF8String);
+            }
+        }
+        envp_buf[envp_pos] = '\0'; // double-NUL terminate
+
+#undef TERM_ENVP_APPEND
+
+        err = do_execve("/bin/sh", 2, argv, envp_buf);
+        if (err < 0) {
+            NSLog(@"ISHKernel: terminal %d: do_execve failed: %d", handle, err);
+            return;
+        }
+
+        NSLog(@"ISHKernel: terminal %d started (pid %d, pts/%d)", handle, current->pid, tty->num);
+        task_start(current);
+    });
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:ISHTerminalCreatedNotification
+            object:nil
+            userInfo:@{@"handle": @(handle)}];
+    });
+
+    NSLog(@"ISHKernel: Terminal %d launch initiated", handle);
+    return handle;
+}
+
+- (void)setOutputCallback:(ISHOutputCallback)callback forTerminal:(int)handle {
+    pthread_mutex_lock(&g_terminalLock);
+    if (callback) {
+        g_terminalCallbacksByHandle[@(handle)] = [callback copy];
+    } else {
+        [g_terminalCallbacksByHandle removeObjectForKey:@(handle)];
+    }
+    pthread_mutex_unlock(&g_terminalLock);
+}
+
+- (void)sendInput:(NSData *)data toTerminal:(int)handle {
+    if (data.length == 0) return;
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *ttyPtr = g_terminalTTYByHandle[@(handle)];
+    pthread_mutex_unlock(&g_terminalLock);
+    if (ttyPtr) {
+        struct tty *tty = (struct tty *)(uintptr_t)ttyPtr.unsignedLongLongValue;
+        tty_input(tty, data.bytes, data.length, false);
+    }
+}
+
+- (void)setTerminalSize:(int)columns rows:(int)rows forTerminal:(int)handle {
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *ttyPtr = g_terminalTTYByHandle[@(handle)];
+    pthread_mutex_unlock(&g_terminalLock);
+    if (ttyPtr) {
+        struct tty *tty = (struct tty *)(uintptr_t)ttyPtr.unsignedLongLongValue;
+        struct winsize_ winsize = {.row = (uint16_t)rows, .col = (uint16_t)columns, .xpixel = 0, .ypixel = 0};
+        tty_set_winsize(tty, winsize);
+    }
+}
+
+- (void)terminateTerminal:(int)handle {
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *pidNum = g_terminalPidsByHandle[@(handle)];
+    [g_terminalCallbacksByHandle removeObjectForKey:@(handle)];
+    pthread_mutex_unlock(&g_terminalLock);
+
+    if (pidNum && pidNum.intValue > 1) {
+        [ISHShellExecutor killProcessGroup:pidNum.intValue];
+    }
+
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *ttyPtr = g_terminalTTYByHandle[@(handle)];
+    if (ttyPtr) {
+        [g_terminalHandlesByTTY removeObjectForKey:ttyPtr];
+    }
+    [g_terminalTTYByHandle removeObjectForKey:@(handle)];
+    [g_terminalPidsByHandle removeObjectForKey:@(handle)];
+    pthread_mutex_unlock(&g_terminalLock);
+}
+
+- (int)shellPidForTerminal:(int)handle {
+    pthread_mutex_lock(&g_terminalLock);
+    NSNumber *pidNum = g_terminalPidsByHandle[@(handle)];
+    pthread_mutex_unlock(&g_terminalLock);
+    return pidNum ? pidNum.intValue : 0;
 }
 
 - (void)sendInput:(NSData *)data {

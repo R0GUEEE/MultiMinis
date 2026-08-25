@@ -12,6 +12,14 @@ NS_ASSUME_NONNULL_BEGIN
 extern NSNotificationName const ISHProcessExitedNotification;
 extern NSNotificationName const ISHTerminalOutputNotification;
 
+/// A new interactive terminal (PTY + login shell) was created by
+/// startNewTerminalWithOutputCallback:. userInfo: @{@"handle": NSNumber}
+extern NSNotificationName const ISHTerminalCreatedNotification;
+
+/// The shell process of a terminal exited.
+/// userInfo: @{@"handle": NSNumber, @"pid": NSNumber, @"code": NSNumber}
+extern NSNotificationName const ISHTerminalExitedNotification;
+
 typedef void (^ISHOutputCallback)(NSData *data);
 typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullable error);
 
@@ -60,6 +68,31 @@ typedef void (^ISHCommandCompletionCallback)(NSString *output, NSError * _Nullab
 /// @param columns Number of columns (character width)
 /// @param rows Number of rows (character height)
 - (void)setTerminalSize:(int)columns rows:(int)rows;
+
+#pragma mark - Multiple terminals (tabs)
+
+/// Create a new interactive terminal: spawns a login shell (/bin/sh -l) on a
+/// fresh pseudo-terminal as a child of init and routes that terminal's output
+/// to `callback` (invoked on the main queue). Returns a positive handle, or
+/// -1 if the kernel isn't booted. The spawn itself is asynchronous — output
+/// may arrive shortly after this returns. Post ISHTerminalCreatedNotification
+/// on success.
+- (int)startNewTerminalWithOutputCallback:(nullable ISHOutputCallback)callback;
+
+/// Replace the output callback for an existing terminal handle.
+- (void)setOutputCallback:(nullable ISHOutputCallback)callback forTerminal:(int)handle;
+
+/// Send input to a specific terminal (created by startNewTerminal…).
+- (void)sendInput:(NSData *)data toTerminal:(int)handle;
+
+/// Set window size for a specific terminal.
+- (void)setTerminalSize:(int)columns rows:(int)rows forTerminal:(int)handle;
+
+/// Kill the terminal's shell process group and release its resources.
+- (void)terminateTerminal:(int)handle;
+
+/// The guest PID of the shell running on a terminal (0 if unknown).
+- (int)shellPidForTerminal:(int)handle;
 
 /// Bind-mount an external host directory onto a fakefs path.
 /// After this call, iSH processes accessing linuxPath will transparently

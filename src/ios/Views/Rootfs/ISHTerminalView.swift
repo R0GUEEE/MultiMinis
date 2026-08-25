@@ -14,21 +14,13 @@ struct ISHTerminalView: View {
     var initCommand: String? = nil
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel = ISHTerminalViewModel()
+    @ObservedObject private var store = TerminalSessionStore.shared
+    @State private var boundSessionCreated = false
     @State private var showFileBrowser = false
     @State private var showRootfsManagement = false
     @State private var showRootfsImport = false
     @State private var showKeyboardShortcuts = false
-    @State private var ctrlActive = false
-    @State private var keyboardActive = true
-    /// Whether the software keyboard is currently visible (separate from first
-    /// responder state). On Mac Catalyst or iPad with external keyboard, the
-    /// software keyboard can be hidden while the input view remains first
-    /// responder and continues to receive hardware key events.
-    @State private var softwareKeyboardVisible = false
-    /// URL captured from an OSC `MinisOpenURL` marker emitted by
-    /// /usr/local/bin/minis-open — presented in an in-app WKWebView sheet.
-    @State private var linkPreviewURL: URL?
+
     /// Track whether a sheet is presented so we can resign first responder
     /// and stop fighting with text fields inside the sheet.
     private var isSheetPresented: Bool {
@@ -36,76 +28,23 @@ struct ISHTerminalView: View {
     }
 
     var body: some View {
-        ZStack {
-            TerminalCanvasView(
-                emulator: viewModel.emulator,
-                onResize: { cols, rows in
-                    viewModel.handleResize(cols: cols, rows: rows)
-                },
-                onPaste: { data in
-                    viewModel.sendInput(data)
-                },
-                onTap: {
-                    // Toggle the keyboard. Mirrors TerminalKeyboardAccessory's
-                    // Show/Hide button: if visible, hide; if hidden but input
-                    // view is still first responder (external keyboard / user
-                    // swiped it away), toggle off-then-on to force a fresh
-                    // becomeFirstResponder cycle; otherwise just activate.
-                    if softwareKeyboardVisible {
-                        keyboardActive = false
-                    } else if keyboardActive {
-                        keyboardActive = false
-                        DispatchQueue.main.async { keyboardActive = true }
-                    } else {
-                        keyboardActive = true
-                    }
-                },
-                onDoubleTap: {
-                    viewModel.sendInput(Data([0x09]))
-                }
-            )
-
-            // Invisible keyboard input capture
-            TerminalInputView(
-                onInput: { data in viewModel.sendInput(data) },
-                applicationCursorKeys: viewModel.emulator.applicationCursorKeys,
-                isActive: $keyboardActive,
-                ctrlActive: $ctrlActive,
-                isTerminalVisible: !isSheetPresented,
-                onToggleKeyboard: {
-                    keyboardActive.toggle()
-                },
-                onClearScreen: {
-                    viewModel.clearScreen()
-                }
-            )
-            .frame(width: 1, height: 1)
-            .opacity(0)
+        VStack(spacing: 0) {
+            TerminalTabBar(store: store)
+            if let session = store.activeSession {
+                TerminalSessionContent(
+                    session: session,
+                    isTerminalVisible: !isSheetPresented,
+                    onShowFileBrowser: { showFileBrowser = true },
+                    onShowRootfsManagement: { showRootfsManagement = true }
+                )
+            } else {
+                emptyTabState
+            }
         }
         // Terminal fills the full screen — keyboard floats on top.
         // This prevents bounds changes from triggering terminal resize (SIGWINCH).
-        .ignoresSafeArea(.keyboard)
-        // Accessory bar is pinned above the keyboard via safeAreaInset.
-        // It moves with the keyboard but does NOT affect the terminal's frame.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            TerminalKeyboardAccessory(
-                onInput: { data in viewModel.sendInput(data) },
-                ctrlActive: $ctrlActive,
-                onShowFileBrowser: { showFileBrowser = true },
-                onShowRootfsManagement: { showRootfsManagement = true },
-                keyboardActive: $keyboardActive,
-                softwareKeyboardVisible: softwareKeyboardVisible,
-                onPaste: {
-                    guard let text = UIPasteboard.general.string, !text.isEmpty,
-                          let data = text.data(using: .utf8) else { return }
-                    viewModel.sendInput(data)
-                },
-                onClearScreen: {
-                    viewModel.clearScreen()
-                }
-            )
-        }
         .background(Color.black)
+        .ignoresSafeArea(.keyboard)
         .navigationTitle("MultiMinis Shell")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -118,7 +57,7 @@ struct ISHTerminalView: View {
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    viewModel.clearScreen()
+                    store.activeSession?.viewModel.clearScreen()
                 } label: {
                     Image(systemName: "paintbrush")
                 }
@@ -155,8 +94,33 @@ struct ISHTerminalView: View {
                     }
             }
         }
+        .sheet(isPresented: $showFileBrowser) {
+            NavigationStack {
+                FileBrowserView()
+            }
+        }
+        .sheet(isPresented: $showRootfsManagement) {
+            NavigationStack {
+                RootfsManagementView()
+            }
+        }
+        .sheet(isPresented: $showRootfsImport) {
+            NavigationStack {
+                RootfsImportView()
+            }
+        }
         .onAppear {
-            viewModel.startShell(sessionId: sessionId, initCommand: initCommand)
+            // Agent-bound opens (sessionId != nil) always create a fresh
+            // shell for that chat session; plain opens reuse the persistent
+            // tab set from the store.
+            if !boundSessionCreated {
+                boundSessionCreated = true
+                if sessionId != nil {
+                    _ = store.newSession(sessionId: sessionId, initCommand: initCommand)
+                } else {
+                    _ = store.ensureActiveSession()
+                }
+            }
             // Claim the broker so AIChatView (which sits beneath our
             // fullScreenCover) stops presenting web URLs on top — otherwise
             // its .sheet(item: $safariURL) tries to present while the
@@ -168,11 +132,183 @@ struct ISHTerminalView: View {
         .onDisappear {
             MinisOpenURLBroker.shared.terminalVisible = false
         }
+        .onReceive(NotificationCenter.default.publisher(for: ISHTerminalExitedNotification)) { note in
+            if let handle = note.userInfo?["handle"] as? NSNumber {
+                store.markExited(handle: handle.int32Value)
+            }
+        }
+    }
+
+    /// Shown when the last tab was closed and no session remains.
+    private var emptyTabState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "terminal")
+                .font(.system(size: 40))
+                .foregroundStyle(.gray)
+            Text("No open terminals")
+                .foregroundStyle(.gray)
+            Button {
+                _ = store.newSession()
+            } label: {
+                Label("New Shell", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
+    }
+}
+
+// MARK: - Terminal tab bar
+
+/// Horizontal strip of persistent terminal tabs + a "new tab" button.
+private struct TerminalTabBar: View {
+    @ObservedObject var store: TerminalSessionStore
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(store.sessions) { session in
+                    tabButton(session)
+                }
+                Button {
+                    _ = store.newSession()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .background(Color(white: 0.25), in: RoundedRectangle(cornerRadius: 7))
+                        .foregroundStyle(.white)
+                }
+                .accessibilityLabel("New Terminal")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+        }
+        .background(Color(white: 0.09))
+    }
+
+    private func tabButton(_ session: TerminalSession) -> some View {
+        let isActive = store.activeSession?.id == session.id
+        return HStack(spacing: 6) {
+            Text(session.title)
+                .font(.caption)
+                .lineLimit(1)
+            if session.isRunning {
+                Button {
+                    store.closeSession(session)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isActive ? Color.black.opacity(0.7) : .gray)
+                .accessibilityLabel("Close \(session.title)")
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(isActive ? Color(white: 0.95) : Color(white: 0.22),
+                    in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(isActive ? Color.black : .white)
+        .onTapGesture {
+            store.activate(session)
+        }
+    }
+}
+
+// MARK: - Terminal session content
+
+/// The actual terminal UI for one session: canvas, keyboard capture, accessory
+/// bar and the keyboard / URL handlers. Only the store's active session is
+/// rendered, so these states are per-session by construction.
+private struct TerminalSessionContent: View {
+    @ObservedObject var session: TerminalSession
+    var isTerminalVisible: Bool
+    var onShowFileBrowser: () -> Void
+    var onShowRootfsManagement: () -> Void
+
+    @State private var ctrlActive = false
+    @State private var keyboardActive = true
+    /// Whether the software keyboard is currently visible (separate from first
+    /// responder state). On Mac Catalyst or iPad with external keyboard, the
+    /// software keyboard can be hidden while the input view remains first
+    /// responder and continues to receive hardware key events.
+    @State private var softwareKeyboardVisible = false
+    /// URL captured from an OSC `MinisOpenURL` marker emitted by
+    /// /usr/local/bin/minis-open — presented in an in-app WKWebView sheet.
+    @State private var linkPreviewURL: URL?
+
+    private var viewModel: ISHTerminalViewModel { session.viewModel }
+
+    var body: some View {
+        ZStack {
+            TerminalCanvasView(
+                emulator: viewModel.emulator,
+                onResize: { cols, rows in
+                    viewModel.handleResize(cols: cols, rows: rows)
+                },
+                onPaste: { data in
+                    viewModel.sendInput(data)
+                },
+                onTap: {
+                    toggleKeyboard()
+                },
+                onDoubleTap: {
+                    viewModel.sendInput(Data([0x09]))
+                }
+            )
+
+            // Invisible keyboard input capture
+            TerminalInputView(
+                onInput: { data in viewModel.sendInput(data) },
+                applicationCursorKeys: viewModel.emulator.applicationCursorKeys,
+                isActive: $keyboardActive,
+                ctrlActive: $ctrlActive,
+                isTerminalVisible: isTerminalVisible,
+                onToggleKeyboard: {
+                    keyboardActive.toggle()
+                },
+                onClearScreen: {
+                    viewModel.clearScreen()
+                }
+            )
+            .frame(width: 1, height: 1)
+            .opacity(0)
+
+            if !session.isRunning {
+                exitedOverlay
+            }
+        }
+        // Accessory bar is pinned above the keyboard via safeAreaInset.
+        // It moves with the keyboard but does NOT affect the terminal's frame.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            TerminalKeyboardAccessory(
+                onInput: { data in viewModel.sendInput(data) },
+                ctrlActive: $ctrlActive,
+                onShowFileBrowser: onShowFileBrowser,
+                onShowRootfsManagement: onShowRootfsManagement,
+                keyboardActive: $keyboardActive,
+                softwareKeyboardVisible: softwareKeyboardVisible,
+                onPaste: {
+                    guard let text = UIPasteboard.general.string, !text.isEmpty,
+                          let data = text.data(using: .utf8) else { return }
+                    viewModel.sendInput(data)
+                },
+                onClearScreen: {
+                    viewModel.clearScreen()
+                }
+            )
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
             let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
             TerminalRedrawLog.log("keyboardWillShow endFrame=\(end) active=\(keyboardActive)")
             softwareKeyboardVisible = true
-            if !isSheetPresented {
+            if isTerminalVisible {
                 keyboardActive = true
             }
         }
@@ -187,23 +323,8 @@ struct ISHTerminalView: View {
             // `gh auth login`, `read`, vim, etc.
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            if !isSheetPresented {
+            if isTerminalVisible {
                 keyboardActive = true
-            }
-        }
-        .sheet(isPresented: $showFileBrowser) {
-            NavigationStack {
-                FileBrowserView()
-            }
-        }
-        .sheet(isPresented: $showRootfsManagement) {
-            NavigationStack {
-                RootfsManagementView()
-            }
-        }
-        .sheet(isPresented: $showRootfsImport) {
-            NavigationStack {
-                RootfsImportView()
             }
         }
         // In-app WKWebView preview for URLs emitted by `minis-open` via
@@ -234,6 +355,41 @@ struct ISHTerminalView: View {
             MinisLinkPreviewView(url: url, browserPool: nil)
         }
     }
+
+    /// Shown when the kernel reports this session's shell exited.
+    private var exitedOverlay: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            Text("This shell has exited.")
+                .foregroundStyle(.white)
+            Button {
+                _ = TerminalSessionStore.shared.newSession()
+            } label: {
+                Label("New Shell", systemImage: "plus.circle.fill")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(20)
+        .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func toggleKeyboard() {
+        // Toggle the keyboard. Mirrors TerminalKeyboardAccessory's
+        // Show/Hide button: if visible, hide; if hidden but input
+        // view is still first responder (external keyboard / user
+        // swiped it away), toggle off-then-on to force a fresh
+        // becomeFirstResponder cycle; otherwise just activate.
+        if softwareKeyboardVisible {
+            keyboardActive = false
+        } else if keyboardActive {
+            keyboardActive = false
+            DispatchQueue.main.async { keyboardActive = true }
+        } else {
+            keyboardActive = true
+        }
+    }
 }
 
 // MARK: - View Model
@@ -243,6 +399,19 @@ class ISHTerminalViewModel: ObservableObject {
     private let logger = AppLogger(category: "ISHTerminalViewModel")
 
     private var isShellStarted = false
+
+    /// Kernel terminal handle when running in tab mode (a PTY created by
+    /// ISHKernel.startNewTerminal…). -1 = legacy single-console mode.
+    private(set) var terminalHandle: Int32 = -1
+    /// Whether this VM should spawn its shell on its own terminal instead of
+    /// the legacy console path (which routes through the global outputCallback).
+    private var terminalMode = false
+
+    /// Switch this VM to multi-terminal (tab) mode. Must be called before
+    /// startShell.
+    func configureForTerminalMode() {
+        terminalMode = true
+    }
 
     /// Monotonic token used to detect whether the currently installed global
     /// outputCallback still belongs to this VM instance. See `installedCallbackGeneration`.
@@ -270,6 +439,7 @@ class ISHTerminalViewModel: ObservableObject {
         // bug. Swift ARC runs deinit asynchronously, so it is common for an
         // old VM's deinit to land AFTER a new VM has already installed its
         // own callback in startShell().
+        guard !terminalMode else { return } // per-terminal callbacks are owned by the kernel map
         Self.generationLock.lock()
         let owner = Self.currentOwnerGeneration
         Self.generationLock.unlock()
@@ -278,28 +448,18 @@ class ISHTerminalViewModel: ObservableObject {
         }
     }
 
-    private func setupOutputCallback() {
-        // Capture the emulator strongly — NOT self. The closure stays valid
-        // independent of VM lifetime; deinit clears it only if we still own
-        // the global slot.
+    /// Coalesced output closure that feeds `emulator`. The kernel fires the
+    /// TTY callback thousands of times per millisecond with tiny (4–24 byte)
+    /// chunks during commands like `ls`; dispatching each chunk to the main
+    /// queue floods it and starves touch/keyboard events. Instead: append to
+    /// a pending buffer under a lock, and schedule a single main.async only
+    /// on the empty→non-empty transition. The main block drains whatever has
+    /// accumulated by the time it runs — typically the entire burst.
+    private func makeCoalescedOutputClosure() -> ISHOutputCallback {
         let emulator = self.emulator
-        Self.generationLock.lock()
-        Self.generationCounter += 1
-        let gen = Self.generationCounter
-        Self.currentOwnerGeneration = gen
-        Self.generationLock.unlock()
-        myGeneration = gen
-
-        // Coalesce TTY output bursts. ISHKernel fires outputCallback thousands
-        // of times per millisecond with tiny (4–24 byte) chunks during commands
-        // like `ls`. Dispatching each chunk to the main queue floods it and
-        // starves touch/keyboard events. Instead: append to a pending buffer
-        // under a lock, and schedule a single main.async only on the
-        // empty→non-empty transition. The main block drains whatever has
-        // accumulated by the time it runs — typically the entire burst.
         let pendingLock = NSLock()
         var pendingData = Data()
-        ISHKernel.shared.outputCallback = { (data: Data) in
+        let closure: ISHOutputCallback = { (data: Data) in
             pendingLock.lock()
             let wasEmpty = pendingData.isEmpty
             pendingData.append(data)
@@ -314,22 +474,39 @@ class ISHTerminalViewModel: ObservableObject {
                 emulator.feed(drained)
             }
         }
+        return closure
+    }
+
+    private func setupOutputCallback() {
+        Self.generationLock.lock()
+        Self.generationCounter += 1
+        let gen = Self.generationCounter
+        Self.currentOwnerGeneration = gen
+        Self.generationLock.unlock()
+        myGeneration = gen
+
+        ISHKernel.shared.outputCallback = makeCoalescedOutputClosure()
+
         // Wire up the terminal → TTY response path so the emulator can reply
         // to queries like DSR (ESC[6n → ESC[row;colR). Without this, programs
         // that query cursor position (e.g. Go's survey library used by gh) will
         // block forever waiting for the response.
+        wireResponsePath(emulator: emulator)
+    }
+
+    private func wireResponsePath(emulator: TerminalEmulator) {
         emulator.onResponse = { [weak self] data in
             self?.sendInput(data)
         }
     }
 
     func startShell(sessionId: String? = nil, initCommand: String? = nil) {
-        // Always (re)install the output callback first. This is safe to call
-        // multiple times — each call overwrites the previous global closure.
-        // Doing it here instead of in init() avoids the iOS 16 @StateObject
-        // churn problem where a provisional VM installs a callback that
-        // immediately becomes orphaned when SwiftUI discards the VM.
-        setupOutputCallback()
+        // Console mode installs the global output callback up front (existing
+        // behavior). Tab mode registers a per-terminal callback at spawn time
+        // instead — never touch the global slot.
+        if !terminalMode {
+            setupOutputCallback()
+        }
 
         guard !isShellStarted else { return }
         isShellStarted = true
@@ -415,16 +592,33 @@ class ISHTerminalViewModel: ObservableObject {
 
         // Start shell
         stepStart = CFAbsoluteTimeGetCurrent()
-        // Start as login shell (-l) so /etc/profile and /etc/profile.d/*.sh
-        // are sourced, enabling command history and line editing.
-        let err = ISHKernel.shared.executeCommand(["/bin/sh", "-l"])
-        logger.info("[StartShell] executeCommand(/bin/sh -l): \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
-        if err < 0 {
-            let msg = "Failed to start shell: \(err)\r\n"
-            if let data = msg.data(using: .utf8) {
-                emulator.feed(data)
+        if terminalMode {
+            // Tab mode: spawn a fresh login shell on its own pseudo-terminal.
+            // The kernel registers the coalesced callback before dispatching
+            // the spawn, so early prompt output is never lost.
+            wireResponsePath(emulator: emulator)
+            let handle = ISHKernel.shared.startNewTerminalWithOutputCallback(makeCoalescedOutputClosure())
+            if handle < 0 {
+                let msg = "Failed to start terminal: \(handle)\r\n"
+                if let data = msg.data(using: .utf8) {
+                    emulator.feed(data)
+                }
+                return
             }
-            return
+            terminalHandle = handle
+            logger.info("[StartShell] terminal handle \(handle) started in \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
+        } else {
+            // Start as login shell (-l) so /etc/profile and /etc/profile.d/*.sh
+            // are sourced, enabling command history and line editing.
+            let err = ISHKernel.shared.executeCommand(["/bin/sh", "-l"])
+            logger.info("[StartShell] executeCommand(/bin/sh -l): \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
+            if err < 0 {
+                let msg = "Failed to start shell: \(err)\r\n"
+                if let data = msg.data(using: .utf8) {
+                    emulator.feed(data)
+                }
+                return
+            }
         }
 
         logger.info("[StartShell] TOTAL: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms (sessionId=\(sessionId ?? "nil"))")
@@ -462,9 +656,14 @@ class ISHTerminalViewModel: ObservableObject {
     func sendInput(_ data: Data) {
         let tEnq = TerminalRedrawLog.nowMs()
         let size = data.count
+        let handle = terminalHandle
         inputQueue.async {
             let tDeq = TerminalRedrawLog.nowMs()
-            ISHKernel.shared.sendInput(data)
+            if handle > 0 {
+                ISHKernel.shared.sendInput(data, toTerminal: handle)
+            } else {
+                ISHKernel.shared.sendInput(data)
+            }
             let tWrite = TerminalRedrawLog.nowMs()
             TerminalRedrawLog.log(String(format: "sendInput bytes=%d enq->deq=%.1fms write=%.1fms",
                 size, tDeq - tEnq, tWrite - tDeq))
@@ -482,32 +681,59 @@ class ISHTerminalViewModel: ObservableObject {
 
     func handleResize(cols: Int, rows: Int) {
         emulator.resize(cols: cols, rows: rows)
-        ISHKernel.shared.setTerminalSize(Int32(cols), rows: Int32(rows))
+        let handle = terminalHandle
+        if handle > 0 {
+            ISHKernel.shared.setTerminalSize(Int32(cols), rows: Int32(rows), forTerminal: handle)
+        } else {
+            ISHKernel.shared.setTerminalSize(Int32(cols), rows: Int32(rows))
+        }
     }
 }
 
 // MARK: - Quick Command Button
 
+/// Key-styled toolbar button matching the iSH-AOK accessory bar look:
+/// rounded key with a subtle bottom shadow, colored by the system appearance
+/// (white key / black glyph in light mode, translucent key / white glyph in
+/// dark mode). `isActive` (e.g. sticky Ctrl) tints it blue.
 struct QuickCommandButton: View {
     let label: String
     let icon: String
     var isActive: Bool = false
     let action: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.caption)
+                if !icon.isEmpty {
+                    Image(systemName: icon)
+                        .font(.caption)
+                }
                 Text(label)
                     .font(.caption)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(isActive ? Color.blue : Color(white: 0.25))
-            .foregroundColor(isActive ? .white : .green)
-            .cornerRadius(6)
+            .background(backgroundColor, in: RoundedRectangle(cornerRadius: 5))
+            .foregroundStyle(foregroundColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Color.black.opacity(0.15), lineWidth: 0.5)
+            )
+            .shadow(color: Color.black.opacity(0.4), radius: 0, x: 0, y: 1)
         }
+    }
+
+    private var backgroundColor: Color {
+        if isActive { return .blue }
+        return colorScheme == .light ? .white : Color(white: 1.0, opacity: 0.30)
+    }
+
+    private var foregroundColor: Color {
+        if isActive { return .white }
+        return colorScheme == .light ? .black : .white
     }
 }
 
