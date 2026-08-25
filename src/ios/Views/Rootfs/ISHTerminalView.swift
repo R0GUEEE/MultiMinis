@@ -580,12 +580,29 @@ class ISHTerminalViewModel: ObservableObject {
             let err = ISHKernel.shared.boot(withRootPath: rootPath)
             logger.info("[StartShell] boot: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
             if err < 0 {
-                let msg = "Failed to boot kernel: \(err)\r\nRootfs: \(rootPath)/data\r\n" +
-                          "If the data directory is missing, reinstall or reselect a rootfs profile (Settings → Rootfs Management).\r\n"
+                // Try once more with the bundled Alpine profile; if THAT works,
+                // the user gets a usable shell instead of a dead kernel, and
+                // the message explains what happened.
+                let probe = RootfsManager.bootProbeDescription(rootPath: rootPath)
+                let failedProfile = RootfsManager.shared.activeProfile
+                RootfsManager.shared.selectBundledProfile()
+                let fallbackPath = RootfsManager.shared.rootfsPath.path
+                let fallbackErr = ISHKernel.shared.boot(withRootPath: fallbackPath)
+                if fallbackErr < 0 {
+                    let msg = "Failed to boot kernel: \(err) (rootfs: \(rootPath)/data)\r\n" +
+                              "Probe: \(probe)\r\n" +
+                              "Bundled fallback also failed: \(fallbackErr)\r\n" +
+                              "Reinstall or reselect a rootfs profile (Settings → Rootfs Management).\r\n"
+                    if let data = msg.data(using: .utf8) {
+                        emulator.feed(data)
+                    }
+                    return
+                }
+                let msg = "The selected rootfs '\(failedProfile)' failed to boot (\(err): \(probe)).\r\n" +
+                          "Switched back to the bundled Alpine rootfs.\r\n"
                 if let data = msg.data(using: .utf8) {
                     emulator.feed(data)
                 }
-                return
             }
         } else {
             logger.info("[StartShell] kernel already booted, skipping install+boot")

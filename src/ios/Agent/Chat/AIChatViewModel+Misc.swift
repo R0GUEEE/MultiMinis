@@ -29,12 +29,20 @@ extension AIChatViewModel {
                     logger.info("[KernelBoot] kernel boot call: \(String(format: "%.1f", kernelElapsed))ms")
                     if err < 0 {
                         // err == -2 (ENOENT) means the active profile's data/
-                        // directory is missing. The active-profile getter now
-                        // validates installability, so this is usually a stale
-                        // selection — surface the path so it's actionable.
-                        kernelStatus = .failed("Kernel boot failed: \(err) (rootfs: \(rootPath)/data). " +
-                                               "If the data directory is missing, reinstall or reselect the rootfs in Settings → Rootfs Management.")
-                        return
+                        // directory can't be mounted. Fall back to the bundled
+                        // Alpine so the agent keeps working, and surface a
+                        // filesystem probe for diagnosis.
+                        let probe = RootfsManager.bootProbeDescription(rootPath: rootPath)
+                        let failedProfile = RootfsManager.shared.activeProfile
+                        RootfsManager.shared.selectBundledProfile()
+                        let fallbackPath = RootfsManager.shared.rootfsPath.path
+                        let fallbackErr = ISHKernel.shared.boot(withRootPath: fallbackPath)
+                        if fallbackErr < 0 {
+                            kernelStatus = .failed("Kernel boot failed: \(err) (rootfs: \(rootPath)/data; probe: \(probe)). Bundled fallback also failed: \(fallbackErr). Reinstall or reselect the rootfs in Settings → Rootfs Management.")
+                            return
+                        }
+                        kernelStatus = .booted
+                        logger.warning("[KernelBoot] boot failed (\(err)) for '\(failedProfile)', fell back to bundled Alpine")
                     }
                     // Wire fakefs change events into the iCloud Sync v2
                     // SessionFile dirty pipeline. Must be done after boot

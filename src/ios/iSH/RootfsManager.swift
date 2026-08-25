@@ -117,6 +117,28 @@ class RootfsManager {
         return root.appendingPathComponent(".arch")
     }
 
+    /// Switch the active profile back to the bundled Alpine (persisted), so a
+    /// profile that fails to boot doesn't leave the user stranded.
+    func selectBundledProfile() {
+        activeProfileName = Self.bundledProfileName
+        logger.warning("Active rootfs switched back to bundled '\(Self.bundledProfileName)' after boot failure")
+    }
+
+    /// Filesystem probe for boot failures: reports exactly what exists at the
+    /// profile path so a missing/unmountable rootfs is self-diagnosing.
+    static func bootProbeDescription(rootPath: String) -> String {
+        let fm = FileManager.default
+        let dataURL = URL(fileURLWithPath: rootPath).appendingPathComponent("data")
+        let dbURL = URL(fileURLWithPath: rootPath).appendingPathComponent("meta.db")
+        let archURL = URL(fileURLWithPath: rootPath).appendingPathComponent(".arch")
+        var isDir: ObjCBool = false
+        let dataExists = fm.fileExists(atPath: dataURL.path, isDirectory: &isDir)
+        let entryCount = dataExists ? (try? fm.contentsOfDirectory(atPath: dataURL.path).count) ?? -1 : -1
+        let arch = (try? String(contentsOf: archURL, encoding: .utf8)) ?? "<missing>"
+        return "data:\(dataExists ? (isDir.boolValue ? "dir(\(entryCount) entries)" : "file") : "missing") | "
+             + "meta.db:\(fm.fileExists(atPath: dbURL.path)) | .arch:\(arch.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
     /// True if the active profile is installed and bootable.
     var isInstalled: Bool {
         return isRootfsInstalled(at: rootfsPath)
