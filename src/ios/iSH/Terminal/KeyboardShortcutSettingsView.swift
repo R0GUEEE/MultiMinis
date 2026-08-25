@@ -77,10 +77,12 @@ struct KeyboardShortcutSettingsView: View {
                 Text("Shortcuts work with a hardware keyboard and take priority over the built-in Ctrl / Alt handling. “Send bytes” accepts hex like 1b 5b 44 for ESC [ D.")
             }
 
-            Section("Key Behavior") {
+            Section {
                 Toggle("Ctrl sends control codes", isOn: $settings.ctrlSendsControlCodes)
                 Toggle("Alt sends Esc + key (Meta)", isOn: $settings.altSendsEsc)
                 Toggle("Backspace sends DEL (0x7F)", isOn: $settings.backspaceSendsDel)
+            } header: {
+                Text("Key Behavior")
             } footer: {
                 Text("When Ctrl or Alt handling is off, those combinations fall through to the system instead of the terminal.")
             }
@@ -120,7 +122,7 @@ private struct BindingEditorView: View {
 
     // Key combination state
     @State private var input = ""
-    @State private var flags: UInt = 0
+    @State private var flags: Int = 0
     @State private var isCapturing = false
 
     // Action state
@@ -220,7 +222,7 @@ private struct BindingEditorView: View {
             }
 
             // MARK: Action
-            Section("Action") {
+            Section {
                 Picker("Action", selection: $actionKind) {
                     ForEach(ActionKind.allCases) { kind in
                         Text(kind.label).tag(kind)
@@ -254,6 +256,8 @@ private struct BindingEditorView: View {
                     Text(actionKind.label)
                         .foregroundStyle(.secondary)
                 }
+            } header: {
+                Text("Action")
             } footer: {
                 if actionKind == .sendHex {
                     Text("Bytes are sent raw to the terminal. Example: 1b 5b 44 = ESC [ D (left arrow).")
@@ -339,7 +343,7 @@ private struct BindingEditorView: View {
 /// next hardware key combination pressed (with at least one of Ctrl / Alt /
 /// ⌘, or a special key such as an arrow or F-key).
 private struct KeyCaptureBox: UIViewRepresentable {
-    var onCapture: (String, UInt) -> Void
+    var onCapture: (String, Int) -> Void
     var onCancel: () -> Void
 
     func makeUIView(context: Context) -> KeyCaptureView {
@@ -359,21 +363,11 @@ private struct KeyCaptureBox: UIViewRepresentable {
 }
 
 /// Plain UIView that captures hardware key combinations via UIKeyCommand and
-/// pressesBegan. Suppresses the software keyboard while capturing.
+/// pressesBegan. A plain (non-text-input) UIView never summons the software
+/// keyboard, so capture works silently with a hardware keyboard.
 private final class KeyCaptureView: UIView {
-    var onCapture: ((String, UInt) -> Void)?
+    var onCapture: ((String, Int) -> Void)?
     var onCancel: (() -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        // Hide the software keyboard — we only care about hardware keys here.
-        inputView = UIView()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        inputView = UIView()
-    }
 
     override var canBecomeFirstResponder: Bool { true }
 

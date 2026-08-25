@@ -74,7 +74,7 @@ struct KeyboardShortcutBinding: Identifiable, Codable, Hashable {
     /// token such as "UP", "ESC", "F5"…
     var input: String
     /// Raw value of `UIKeyModifierFlags` (command / shift / control / alternate).
-    var modifierFlags: UInt
+    var modifierFlags: Int
     var action: KeyboardShortcutAction
 
     var displayName: String {
@@ -120,7 +120,7 @@ enum KeyboardShortcutFormatter {
         }
     }
 
-    static func displayName(input: String, flags: UInt) -> String {
+    static func displayName(input: String, flags: Int) -> String {
         symbol(for: UIKeyModifierFlags(rawValue: flags)) + keyName(for: input)
     }
 }
@@ -283,7 +283,7 @@ final class KeyboardShortcutSettings: ObservableObject {
     // MARK: - Lookup
 
     /// Exact match: same key input AND same modifier bitmask.
-    func binding(input: String, flags: UInt) -> KeyboardShortcutBinding? {
+    func binding(input: String, flags: Int) -> KeyboardShortcutBinding? {
         bindings.first { $0.input == input && $0.modifierFlags == flags }
     }
 
