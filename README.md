@@ -15,6 +15,11 @@ A distinguishing feature is the ability to **import and boot mini root
 filesystems as `tar.gz`** (iSH-AOK style), switching between Linux
 distributions from the terminal UI.
 
+The terminal also ships with a **configurable keyboard shortcut menu**
+(Settings → Terminal, or the keyboard toolbar button in the shell): record
+hardware key combinations with a Magic Keyboard and bind them to control
+characters, custom byte sequences, paste, clear screen, or keyboard toggles.
+
 It is free, and fully open source.
 
 **We believe that in the age of AI, technical design and code are no longer
