@@ -156,7 +156,7 @@ enum KeyboardSpecialKey {
         case .keyboardEnd: return "END"
         case .keyboardPageUp: return "PGUP"
         case .keyboardPageDown: return "PGDN"
-        case .keyboardReturn, .keyboardReturnSecondary, .keyboardKeypadEnter: return "RETURN"
+        case .keyboardReturn: return "RETURN"
         case .keyboardSpacebar: return " "
         case .keyboardF1: return "F1"
         case .keyboardF2: return "F2"
