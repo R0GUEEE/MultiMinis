@@ -39,6 +39,8 @@
 		AA26CCBE2F31080100AECF2D /* RootfsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA26CCBF2F31080100AECF2D /* RootfsManager.swift */; };
 		E5TAR0001 /* TarArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TAR0002 /* TarArchive.swift */; };
 		E5XZ0001 /* LZMAWrapper.m in Sources */ = {isa = PBXBuildFile; fileRef = E5XZ0002 /* LZMAWrapper.m */; };
+		E5FSI0001 /* fakefs.c in Sources */ = {isa = PBXBuildFile; fileRef = E5FSI0002 /* fakefs.c */; };
+		E5FSI0004 /* FakefsImporter.m in Sources */ = {isa = PBXBuildFile; fileRef = E5FSI0005 /* FakefsImporter.m */; };
 		E5TAR0003 /* RootfsArchiveDecompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TAR0004 /* RootfsArchiveDecompressor.swift */; };
 		E5TAR0005 /* RootfsImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5TAR0006 /* RootfsImportView.swift */; };
 		AA26CCC12F31090000AECF2D /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA26CCC22F31090000AECF2D /* SystemConfiguration.framework */; };
@@ -635,6 +637,9 @@
 		AA26CCBF2F31080100AECF2D /* RootfsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsManager.swift; sourceTree = "<group>"; };
 		E5TAR0002 /* TarArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TarArchive.swift; sourceTree = "<group>"; };
 		E5XZ0002 /* LZMAWrapper.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LZMAWrapper.m; sourceTree = "<group>"; };
+		E5FSI0002 /* fakefs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = fakefs.c; sourceTree = "<group>"; };
+		E5FSI0005 /* FakefsImporter.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = FakefsImporter.m; sourceTree = "<group>"; };
+		E5FSI0006 /* FakefsImporter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FakefsImporter.h; sourceTree = "<group>"; };
 		E5XZ0004 /* LZMAWrapper.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LZMAWrapper.h; sourceTree = "<group>"; };
 		E5TAR0004 /* RootfsArchiveDecompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsArchiveDecompressor.swift; sourceTree = "<group>"; };
 		E5TAR0006 /* RootfsImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootfsImportView.swift; sourceTree = "<group>"; };
@@ -1304,6 +1309,7 @@
 				E52000030 /* Providers */,
 				E5W000010 /* WebApp */,
 				E5B000030 /* iSH */,
+				E5FSI0003 /* KernelTools */,
 				E5L000030 /* NativeOffloads */,
 				E54000030 /* Debug */,
 				E5CR00100 /* Diagnostics */,
@@ -1508,11 +1514,21 @@
 				E5TAR0002 /* TarArchive.swift */,
 				E5XZ0002 /* LZMAWrapper.m */,
 				E5XZ0004 /* LZMAWrapper.h */,
+				E5FSI0005 /* FakefsImporter.m */,
+				E5FSI0006 /* FakefsImporter.h */,
 				E5TAR0004 /* RootfsArchiveDecompressor.swift */,
 				AA26CCB62F31067900AECF2D /* alpine-rootfs.zip */,
 				AA0838D32F3B941A00049557 /* RootfsPatch.bundle */,
 			);
 			path = iSH;
+			sourceTree = "<group>";
+		};
+		E5FSI0003 /* KernelTools */ = {
+			isa = PBXGroup;
+			children = (
+				E5FSI0002 /* fakefs.c */,
+			);
+			path = "../../deps/ish/tools";
 			sourceTree = "<group>";
 		};
 		E5BSH0100 /* Shell */ = {
@@ -2509,6 +2525,8 @@
 				AA0838FF2F3B941A00049557 /* MirrorSpeedTestView.swift in Sources */,
 				E5TAR0001 /* TarArchive.swift in Sources */,
 				E5XZ0001 /* LZMAWrapper.m in Sources */,
+				E5FSI0001 /* fakefs.c in Sources */,
+				E5FSI0004 /* FakefsImporter.m in Sources */,
 				E5TAR0003 /* RootfsArchiveDecompressor.swift in Sources */,
 				E5TAR0005 /* RootfsImportView.swift in Sources */,
 				AA0838CC2F3B941A00049557 /* StorageManagementView.swift in Sources */,
@@ -2995,6 +3013,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/../../deps/include",
 					"$(SRCROOT)/../../deps/include/ish",
+					"$(SRCROOT)/../../deps/ish/deps/libarchive/libarchive",
 					"$(SRCROOT)/NativeOffloads",
 					"$(SRCROOT)/../../deps/frameworks/FFmpeg.framework/Headers",
 					"$(SRCROOT)/Vendor/cppjieba/include",
@@ -3024,6 +3043,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/../../deps/include",
 					"$(SRCROOT)/../../deps/include/ish",
+					"$(SRCROOT)/../../deps/ish/deps/libarchive/libarchive",
 					"$(SRCROOT)/NativeOffloads",
 					"$(SRCROOT)/../../deps/frameworks/FFmpeg.framework/Headers",
 					"$(SRCROOT)/Vendor/cppjieba/include",
@@ -3190,6 +3210,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/../../deps/include",
 					"$(SRCROOT)/../../deps/include/ish",
+					"$(SRCROOT)/../../deps/ish/deps/libarchive/libarchive",
 					"$(SRCROOT)/NativeOffloads",
 					"$(SRCROOT)/../../deps/frameworks/FFmpeg.framework/Headers",
 					"$(SRCROOT)/Vendor/cppjieba/include",
@@ -3213,6 +3234,8 @@
 					"-lish",
 					"-lfakefs",
 					"-llzma",
+					"-larchive",
+					"-lxml2",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.r0gueee.multiminis;
@@ -3246,6 +3269,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/../../deps/include",
 					"$(SRCROOT)/../../deps/include/ish",
+					"$(SRCROOT)/../../deps/ish/deps/libarchive/libarchive",
 					"$(SRCROOT)/NativeOffloads",
 					"$(SRCROOT)/../../deps/frameworks/FFmpeg.framework/Headers",
 					"$(SRCROOT)/Vendor/cppjieba/include",
@@ -3269,6 +3293,8 @@
 					"-lish",
 					"-lfakefs",
 					"-llzma",
+					"-larchive",
+					"-lxml2",
 				);
 				OTHER_SWIFT_FLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.r0gueee.multiminis;

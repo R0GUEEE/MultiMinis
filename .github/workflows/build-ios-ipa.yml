@@ -74,6 +74,15 @@ jobs:
       - name: Build iSH libraries
         run: ./deps/build_ish.sh
 
+      - name: Build libarchive (iOS static)
+        run: |
+          xcodebuild -project deps/ish/deps/libarchive.xcodeproj \
+            -target libarchive -configuration Release -sdk iphoneos \
+            -derivedDataPath build/libarchive-dd \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
+          mkdir -p deps/libs
+          cp build/libarchive-dd/Build/Products/Release-iphoneos/libarchive.a deps/libs/
+
       - name: Build liblzma (xz support)
         run: ./deps/build_lzma.sh
 

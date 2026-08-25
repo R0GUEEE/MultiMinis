@@ -234,18 +234,22 @@ class RootfsManager {
     /// Decompress + extract a user-supplied mini-rootfs tarball and register
     /// it as a new rootfs profile.
     /// - Parameters:
-    ///   - sourceURL: The .tar.gz / .tgz / .tar file the user picked.
+    ///   - sourceURL: The .tar.gz / .tgz / .tar / .tar.xz file the user picked.
     ///   - displayName: A human label for the new profile.
     ///   - activate: If true, make the imported rootfs the active profile.
+    ///   - progress: Optional progress callback (fraction, message).
     /// - Returns: The new profile name on success.
     ///
-    /// The whole import is staged under tmp and only moved into Documents on
-    /// success, so an interrupted import (app suspended mid-extraction) can
-    /// never leave a half-baked profile behind — which would otherwise show up
-    /// in the list and fail to boot with "kernel boot failed -2" (the kernel
-    /// can't mount a profile whose data/ is missing).
+    /// The fakefs is built by the kernel's own fakefsify tool
+    /// (FakefsImporter → deps/ish/tools/fakefs.c + libarchive), exactly like
+    /// iSH-AOK: it extracts the archive AND writes a meta.db in the kernel's
+    /// canonical format (user_version=5, escaped host names, full stat
+    /// blobs), so an imported rootfs boots reliably. The whole result is
+    /// staged under tmp and only moved into Documents on success, so an
+    /// interrupted import never leaves a half-baked profile behind.
     @discardableResult
-    func importFromTarGz(sourceURL: URL, displayName: String, activate: Bool = false) throws -> String {
+    func importFromTarGz(sourceURL: URL, displayName: String, activate: Bool = false,
+                         progress: ((Double, String?) -> Void)? = nil) throws -> String {
         let fm = FileManager.default
 
         let baseName = sanitizedProfileName(displayName)
@@ -258,23 +262,20 @@ class RootfsManager {
 
         let profileRoot = profilesRoot.appendingPathComponent(profileName)
 
-        // Stage: build the complete profile (data/ + meta.db + .arch) in tmp.
+        // Stage: build the complete fakefs (data/ + meta.db) in tmp.
         let stagingRoot = fm.temporaryDirectory
             .appendingPathComponent("rootfs-import-stage-\(UUID().uuidString)", isDirectory: true)
-        let stagingData = stagingRoot.appendingPathComponent("data")
         defer { try? fm.removeItem(at: stagingRoot) }
 
-        let decompressed = try RootfsArchiveDecompressor.decompress(url: sourceURL)
-        let tarData = decompressed.data
-
         do {
-            try fm.createDirectory(at: stagingData, withIntermediateDirectories: true, attributes: nil)
-            try initializeFakefsDatabase(at: stagingRoot)
-            try extractTarIntoDataDir(tarData: tarData, dataDir: stagingData, databaseRoot: stagingRoot)
-            try currentArch.write(to: archTagPath(for: stagingRoot), atomically: true, encoding: .utf8)
+            try FakefsImporter.importArchive(atPath: sourceURL.path, toPath: stagingRoot.path) { fraction, message in
+                progress?(fraction, message)
+            }
         } catch {
-            throw error
+            throw ImportError.invalidArchive(error.localizedDescription)
         }
+
+        try currentArch.write(to: archTagPath(for: stagingRoot), atomically: true, encoding: .utf8)
 
         guard isRootfsInstalled(at: stagingRoot) else {
             throw ImportError.noBootableRootfs

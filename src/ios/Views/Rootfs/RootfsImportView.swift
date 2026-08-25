@@ -186,7 +186,12 @@ class RootfsImportViewModel: ObservableObject {
                 // so the new rootfs becomes the one booted next launch.
                 let name = try RootfsManager.shared.importFromTarGz(sourceURL: staged,
                                                                     displayName: base,
-                                                                    activate: true)
+                                                                    activate: true) { fraction, message in
+                    let text = message ?? String(format: "Importing… %d%%", Int(fraction * 100))
+                    Task { @MainActor [weak self] in
+                        self?.importStatus = text
+                    }
+                }
                 try? FileManager.default.removeItem(at: staged)
                 await MainActor.run {
                     self.isImporting = false

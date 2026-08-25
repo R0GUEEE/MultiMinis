@@ -339,6 +339,10 @@ copy_outputs() {
     # Util headers
     cp "$ISH_DIR"/util/*.h "$OUTPUT_INCLUDE/ish/util/" 2>/dev/null || true
 
+    # Tools headers (fakefsify API used by the app's rootfs importer)
+    mkdir -p "$OUTPUT_INCLUDE/ish/tools"
+    cp "$ISH_DIR"/tools/fakefs.h "$OUTPUT_INCLUDE/ish/tools/" 2>/dev/null || true
+
     # Platform headers
     cp "$ISH_DIR"/platform/*.h "$OUTPUT_INCLUDE/ish/platform/"
 

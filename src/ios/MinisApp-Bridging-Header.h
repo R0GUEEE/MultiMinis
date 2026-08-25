@@ -46,6 +46,7 @@
 
 // XZ (.tar.xz) rootfs decompression via liblzma
 #import "LZMAWrapper.h"
+#import "FakefsImporter.h"
 
 // NSFileHandle write wrapper that catches NSException (avoids process abort
 // when the reader thread hits a closed pipe / invalid fd / full disk).
