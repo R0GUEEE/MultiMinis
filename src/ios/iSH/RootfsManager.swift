@@ -128,15 +128,25 @@ class RootfsManager {
     /// profile path so a missing/unmountable rootfs is self-diagnosing.
     static func bootProbeDescription(rootPath: String) -> String {
         let fm = FileManager.default
-        let dataURL = URL(fileURLWithPath: rootPath).appendingPathComponent("data")
-        let dbURL = URL(fileURLWithPath: rootPath).appendingPathComponent("meta.db")
-        let archURL = URL(fileURLWithPath: rootPath).appendingPathComponent(".arch")
+        let rootURL = URL(fileURLWithPath: rootPath)
+        let dataURL = rootURL.appendingPathComponent("data")
+        let dbURL = rootURL.appendingPathComponent("meta.db")
+        let archURL = rootURL.appendingPathComponent(".arch")
         var isDir: ObjCBool = false
         let dataExists = fm.fileExists(atPath: dataURL.path, isDirectory: &isDir)
         let entryCount = dataExists ? (try? fm.contentsOfDirectory(atPath: dataURL.path).count) ?? -1 : -1
         let arch = (try? String(contentsOf: archURL, encoding: .utf8)) ?? "<missing>"
-        return "data:\(dataExists ? (isDir.boolValue ? "dir(\(entryCount) entries)" : "file") : "missing") | "
-             + "meta.db:\(fm.fileExists(atPath: dbURL.path)) | .arch:\(arch.trimmingCharacters(in: .whitespacesAndNewlines))"
+        // Is "data" a symlink (possibly to a missing target)? FileManager
+        // follows symlinks, so a broken link would report "missing" — but an
+        // absolute-target link inside the sandbox could resolve differently
+        // for realpath(). Surfacing it makes the probe unambiguous.
+        let dataLink = (try? fm.destinationOfSymbolicLink(atPath: dataURL.path)) ?? ""
+        let rootEntries = (try? fm.contentsOfDirectory(atPath: rootPath).sorted()) ?? []
+        return "data:\(dataExists ? (isDir.boolValue ? "dir(\(entryCount) entries)" : "file") : "missing")"
+             + "\(dataLink.isEmpty ? "" : " symlink->\(dataLink)")"
+             + " | meta.db:\(fm.fileExists(atPath: dbURL.path))"
+             + " | .arch:\(arch.trimmingCharacters(in: .whitespacesAndNewlines))"
+             + " | profile:[\(rootEntries.joined(separator: ","))]"
     }
 
     /// True if the active profile is installed and bootable.
