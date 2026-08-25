@@ -79,9 +79,13 @@ jobs:
           xcodebuild -project deps/ish/deps/libarchive.xcodeproj \
             -target libarchive -configuration Release -sdk iphoneos \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
-          ARCHIVE_A=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-            -name "libarchive.a" -path "*Release-iphoneos*" | head -1)
-          test -n "$ARCHIVE_A" || { echo "libarchive.a not found in DerivedData"; exit 1; }
+          # The vendored project sets SYMROOT to its own build/ directory.
+          ARCHIVE_A="deps/ish/deps/build/Release-iphoneos/libarchive.a"
+          if [ ! -f "$ARCHIVE_A" ]; then
+            ARCHIVE_A=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+              -name "libarchive.a" -path "*Release-iphoneos*" | head -1)
+          fi
+          test -n "$ARCHIVE_A" -a -f "$ARCHIVE_A" || { echo "libarchive.a not found"; exit 1; }
           mkdir -p deps/libs
           cp "$ARCHIVE_A" deps/libs/
 
