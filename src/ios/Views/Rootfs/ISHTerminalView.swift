@@ -132,7 +132,7 @@ struct ISHTerminalView: View {
         .onDisappear {
             MinisOpenURLBroker.shared.terminalVisible = false
         }
-        .onReceive(NotificationCenter.default.publisher(for: ISHTerminalExitedNotification)) { note in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name.ISHTerminalExited)) { note in
             if let handle = note.userInfo?["handle"] as? NSNumber {
                 store.markExited(handle: handle.int32Value)
             }
@@ -597,7 +597,7 @@ class ISHTerminalViewModel: ObservableObject {
             // The kernel registers the coalesced callback before dispatching
             // the spawn, so early prompt output is never lost.
             wireResponsePath(emulator: emulator)
-            let handle = ISHKernel.shared.startNewTerminalWithOutputCallback(makeCoalescedOutputClosure())
+            let handle = ISHKernel.shared.startNewTerminal(outputCallback: makeCoalescedOutputClosure())
             if handle < 0 {
                 let msg = "Failed to start terminal: \(handle)\r\n"
                 if let data = msg.data(using: .utf8) {
