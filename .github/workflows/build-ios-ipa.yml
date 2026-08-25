@@ -78,10 +78,12 @@ jobs:
         run: |
           xcodebuild -project deps/ish/deps/libarchive.xcodeproj \
             -target libarchive -configuration Release -sdk iphoneos \
-            -derivedDataPath build/libarchive-dd \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
+          ARCHIVE_A=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+            -name "libarchive.a" -path "*Release-iphoneos*" | head -1)
+          test -n "$ARCHIVE_A" || { echo "libarchive.a not found in DerivedData"; exit 1; }
           mkdir -p deps/libs
-          cp build/libarchive-dd/Build/Products/Release-iphoneos/libarchive.a deps/libs/
+          cp "$ARCHIVE_A" deps/libs/
 
       - name: Build liblzma (xz support)
         run: ./deps/build_lzma.sh
