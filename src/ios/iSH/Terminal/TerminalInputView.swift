@@ -28,12 +28,20 @@ struct TerminalInputView: UIViewRepresentable {
     /// Whether the terminal view is currently visible (not obscured by sheet)
     var isTerminalVisible: Bool = true
 
+    /// Invoked when a shortcut bound to the "Toggle keyboard" action fires.
+    var onToggleKeyboard: (() -> Void)?
+
+    /// Invoked when a shortcut bound to the "Clear screen" action fires.
+    var onClearScreen: (() -> Void)?
+
     func makeUIView(context: Context) -> TerminalKeyInputView {
         let view = TerminalKeyInputView()
         view.onInput = onInput
         view.applicationCursorKeys = applicationCursorKeys
         view.ctrlActive = ctrlActive
         view.onCtrlConsumed = { ctrlActive = false }
+        view.onToggleKeyboard = onToggleKeyboard
+        view.onClearScreen = onClearScreen
         // Hide the predictive text bar iPadOS shows above a physical keyboard
         view.inputAssistantItem.leadingBarButtonGroups = []
         view.inputAssistantItem.trailingBarButtonGroups = []
@@ -45,6 +53,8 @@ struct TerminalInputView: UIViewRepresentable {
         uiView.onInput = onInput
         uiView.applicationCursorKeys = applicationCursorKeys
         uiView.ctrlActive = ctrlActive
+        uiView.onToggleKeyboard = onToggleKeyboard
+        uiView.onClearScreen = onClearScreen
 
         let shouldBeFirstResponder = isActive && isTerminalVisible
         let coord = context.coordinator
@@ -83,6 +93,41 @@ class TerminalKeyInputView: UIView, UITextInput {
     var applicationCursorKeys: Bool = false
     var ctrlActive: Bool = false
     var onCtrlConsumed: (() -> Void)?
+    /// Invoked when a shortcut bound to the "Toggle keyboard" action fires.
+    var onToggleKeyboard: (() -> Void)?
+    /// Invoked when a shortcut bound to the "Clear screen" action fires.
+    var onClearScreen: (() -> Void)?
+
+    /// Rebuild the UIKeyCommand table when the shortcut configuration changes.
+    private var settingsObserver: NSObjectProtocol?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        observeShortcutChanges()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        observeShortcutChanges()
+    }
+
+    deinit {
+        if let settingsObserver {
+            NotificationCenter.default.removeObserver(settingsObserver)
+        }
+    }
+
+    private func observeShortcutChanges() {
+        settingsObserver = NotificationCenter.default.addObserver(
+            forName: .keyboardShortcutsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.reloadInputViews()
+            }
+        }
+    }
 
     // MARK: - Marked text state (IME composition)
 
@@ -141,8 +186,9 @@ class TerminalKeyInputView: UIView, UITextInput {
             _markedRange = NSRange(location: NSNotFound, length: 0)
             return
         }
-        // Send DEL (0x7F) for backspace
-        sendBytes([0x7F])
+        // DEL (0x7F) by default; configurable to BS (0x08) in settings.
+        let sendDel = KeyboardShortcutSettings.shared.backspaceSendsDel
+        sendBytes(sendDel ? [0x7F] : [0x08])
     }
 
     // MARK: - UITextInput: Marked Text (IME composition)
@@ -292,25 +338,49 @@ class TerminalKeyInputView: UIView, UITextInput {
     // MARK: - Key Commands
     // Ctrl+letter via UIKeyCommand — these override system shortcuts (Ctrl+C=copy,
     // Ctrl+A=selectAll, etc.) because custom keyCommands take priority over
-    // the system's default key bindings.
+    // the system's default key bindings. Custom shortcuts from
+    // KeyboardShortcutSettings take priority over everything here.
     override var keyCommands: [UIKeyCommand]? {
+        let settings = KeyboardShortcutSettings.shared
         var commands: [UIKeyCommand] = []
-        for c in "abcdefghijklmnopqrstuvwxyz" {
-            // Ctrl+letter → control code (0x01-0x1A)
-            let ctrl = UIKeyCommand(input: String(c), modifierFlags: .control, action: #selector(handleCtrlKey(_:)))
-            ctrl.wantsPriorityOverSystemBehavior = true
-            commands.append(ctrl)
 
-            // Alt+letter → ESC + letter (Meta key mode)
-            let alt = UIKeyCommand(input: String(c), modifierFlags: .alternate, action: #selector(handleAltKey(_:)))
-            alt.wantsPriorityOverSystemBehavior = true
-            commands.append(alt)
+        // Custom bindings first (special-key tokens are handled in pressesBegan).
+        for binding in settings.bindings {
+            guard !KeyboardSpecialKey.isSpecialToken(binding.input) else { continue }
+            let custom = UIKeyCommand(
+                input: binding.input,
+                modifierFlags: UIKeyModifierFlags(rawValue: binding.modifierFlags),
+                action: #selector(handleCustomBinding(_:))
+            )
+            custom.wantsPriorityOverSystemBehavior = true
+            commands.append(custom)
         }
-        // Alt+common non-letter keys
-        for ch in "0123456789-=[]\\;',./`" {
-            let cmd = UIKeyCommand(input: String(ch), modifierFlags: .alternate, action: #selector(handleAltKey(_:)))
-            cmd.wantsPriorityOverSystemBehavior = true
-            commands.append(cmd)
+
+        if settings.ctrlSendsControlCodes {
+            for c in "abcdefghijklmnopqrstuvwxyz" {
+                if settings.isOverridden(input: String(c), flags: .control) { continue }
+                // Ctrl+letter → control code (0x01-0x1A)
+                let ctrl = UIKeyCommand(input: String(c), modifierFlags: .control, action: #selector(handleCtrlKey(_:)))
+                ctrl.wantsPriorityOverSystemBehavior = true
+                commands.append(ctrl)
+            }
+        }
+
+        if settings.altSendsEsc {
+            for c in "abcdefghijklmnopqrstuvwxyz" {
+                if settings.isOverridden(input: String(c), flags: .alternate) { continue }
+                // Alt+letter → ESC + letter (Meta key mode)
+                let alt = UIKeyCommand(input: String(c), modifierFlags: .alternate, action: #selector(handleAltKey(_:)))
+                alt.wantsPriorityOverSystemBehavior = true
+                commands.append(alt)
+            }
+            // Alt+common non-letter keys
+            for ch in "0123456789-=[]\\;',./`" {
+                if settings.isOverridden(input: String(ch), flags: .alternate) { continue }
+                let cmd = UIKeyCommand(input: String(ch), modifierFlags: .alternate, action: #selector(handleAltKey(_:)))
+                cmd.wantsPriorityOverSystemBehavior = true
+                commands.append(cmd)
+            }
         }
         return commands
     }
@@ -332,15 +402,64 @@ class TerminalKeyInputView: UIView, UITextInput {
         sendBytes(bytes)
     }
 
+    @objc private func handleCustomBinding(_ command: UIKeyCommand) {
+        guard let input = command.input,
+              let binding = KeyboardShortcutSettings.shared.binding(
+                input: input,
+                flags: command.modifierFlags.rawValue
+              ) else { return }
+        perform(binding.action)
+    }
+
+    /// Executes a shortcut action. Byte-sending actions are handled here;
+    /// app-level actions (toggle keyboard / clear screen) are forwarded to
+    /// the closures provided by the SwiftUI layer.
+    private func perform(_ action: KeyboardShortcutAction) {
+        switch action {
+        case .controlCode(let code):
+            sendBytes([code])
+        case .sendText(let text):
+            if let data = text.data(using: .utf8) {
+                onInput?(data)
+            }
+        case .sendHex(let hex):
+            if let data = Data(hexString: hex) {
+                onInput?(data)
+            }
+        case .paste:
+            guard let text = UIPasteboard.general.string, !text.isEmpty,
+                  let data = text.data(using: .utf8) else { return }
+            onInput?(data)
+        case .toggleKeyboard:
+            onToggleKeyboard?()
+        case .clearScreen:
+            onClearScreen?()
+        }
+    }
+
     // MARK: - Physical Key Presses
     // Arrow keys, Tab, and Escape are handled here instead of keyCommands
     // because UITextInput intercepts them for cursor/text manipulation.
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let settings = KeyboardShortcutSettings.shared
         var handled = false
 
         for press in presses {
             guard let key = press.key else { continue }
+
+            // Custom shortcuts on special keys (arrows, Esc, Tab, F-keys, …)
+            // take priority over the built-in handling below.
+            if let token = KeyboardSpecialKey.token(for: key.keyCode) {
+                if let binding = settings.binding(input: token, flags: key.modifierFlags.rawValue) {
+                    perform(binding.action)
+                    handled = true
+                    continue
+                }
+                // Backspace has no built-in case below — it flows through
+                // UIKeyInput.deleteBackward(), where the configured byte is
+                // applied. Nothing to do here unless the user rebound it.
+            }
 
             switch key.keyCode {
             // Arrow keys with modifier combos

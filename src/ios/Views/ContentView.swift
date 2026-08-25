@@ -4846,6 +4846,22 @@ private struct SettingsSheet: View {
                     }
                 }
 
+                Section("Terminal") {
+                    NavigationLink {
+                        KeyboardShortcutSettingsView()
+                    } label: {
+                        Label {
+                            Text("Keyboard Shortcuts")
+                        } icon: {
+                            Image(systemName: "keyboard")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white)
+                                .frame(width: 21, height: 21)
+                                .background(.orange, in: Circle())
+                        }
+                    }
+                }
+
                 Section("Agent Runtime") {
                     NavigationLink {
                         SkillsManagementView()

@@ -18,6 +18,7 @@ struct ISHTerminalView: View {
     @State private var showFileBrowser = false
     @State private var showRootfsManagement = false
     @State private var showRootfsImport = false
+    @State private var showKeyboardShortcuts = false
     @State private var ctrlActive = false
     @State private var keyboardActive = true
     /// Whether the software keyboard is currently visible (separate from first
@@ -30,7 +31,9 @@ struct ISHTerminalView: View {
     @State private var linkPreviewURL: URL?
     /// Track whether a sheet is presented so we can resign first responder
     /// and stop fighting with text fields inside the sheet.
-    private var isSheetPresented: Bool { showFileBrowser || showRootfsManagement || showRootfsImport }
+    private var isSheetPresented: Bool {
+        showFileBrowser || showRootfsManagement || showRootfsImport || showKeyboardShortcuts
+    }
 
     var body: some View {
         ZStack {
@@ -68,7 +71,13 @@ struct ISHTerminalView: View {
                 applicationCursorKeys: viewModel.emulator.applicationCursorKeys,
                 isActive: $keyboardActive,
                 ctrlActive: $ctrlActive,
-                isTerminalVisible: !isSheetPresented
+                isTerminalVisible: !isSheetPresented,
+                onToggleKeyboard: {
+                    keyboardActive.toggle()
+                },
+                onClearScreen: {
+                    viewModel.clearScreen()
+                }
             )
             .frame(width: 1, height: 1)
             .opacity(0)
@@ -111,6 +120,15 @@ struct ISHTerminalView: View {
                     Image(systemName: "paintbrush")
                 }
             }
+            // Keyboard shortcut configuration
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showKeyboardShortcuts = true
+                } label: {
+                    Image(systemName: "keyboard.badge.ellipsis")
+                }
+                .accessibilityLabel("Keyboard Shortcuts")
+            }
             // Rootfs / import control: view & switch installed rootfs profiles
             // or import a new tar.gz mini-rootfs.
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -120,6 +138,18 @@ struct ISHTerminalView: View {
                     Image(systemName: "shippingbox")
                 }
                 .accessibilityLabel("Rootfs")
+            }
+        }
+        .sheet(isPresented: $showKeyboardShortcuts) {
+            NavigationStack {
+                KeyboardShortcutSettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") {
+                                showKeyboardShortcuts = false
+                            }
+                        }
+                    }
             }
         }
         .onAppear {
