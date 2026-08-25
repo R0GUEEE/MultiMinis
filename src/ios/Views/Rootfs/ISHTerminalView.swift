@@ -42,9 +42,11 @@ struct ISHTerminalView: View {
             }
         }
         // Terminal fills the full screen — keyboard floats on top.
-        // This prevents bounds changes from triggering terminal resize (SIGWINCH).
+        // The CANVAS ignores the keyboard safe area (so showing/hiding the
+        // keyboard never resizes it / fires SIGWINCH), while the accessory
+        // bar is placed by safeAreaInset INTO the keyboard inset — above the
+        // keyboard, not under it.
         .background(Color.black)
-        .ignoresSafeArea(.keyboard)
         .navigationTitle("MultiMinis Shell")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -221,6 +223,18 @@ private struct TerminalTabBar: View {
     }
 }
 
+// MARK: - Keyboard visibility tracker
+
+/// App-wide software-keyboard visibility. The terminal view updates it from
+/// keyboard notifications; session content that appears later (e.g. after a
+/// tab switch while the keyboard is already up) picks up the current state.
+@MainActor
+final class TerminalKeyboardVisibility: ObservableObject {
+    static let shared = TerminalKeyboardVisibility()
+    @Published var isVisible = false
+    private init() {}
+}
+
 // MARK: - Terminal session content
 
 /// The actual terminal UI for one session: canvas, keyboard capture, accessory
@@ -262,6 +276,7 @@ private struct TerminalSessionContent: View {
                     viewModel.sendInput(Data([0x09]))
                 }
             )
+            .ignoresSafeArea(.keyboard)
 
             // Invisible keyboard input capture
             TerminalInputView(
@@ -312,6 +327,7 @@ private struct TerminalSessionContent: View {
         }
         .animation(.easeOut(duration: 0.18), value: softwareKeyboardVisible)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
+            TerminalKeyboardVisibility.shared.isVisible = true
             let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
             TerminalRedrawLog.log("keyboardWillShow endFrame=\(end) active=\(keyboardActive)")
             softwareKeyboardVisible = true
@@ -320,6 +336,7 @@ private struct TerminalSessionContent: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            TerminalKeyboardVisibility.shared.isVisible = false
             TerminalRedrawLog.log("keyboardWillHide active=\(keyboardActive)")
             softwareKeyboardVisible = false
             // Do NOT set keyboardActive = false here. On Mac Catalyst and
@@ -333,6 +350,12 @@ private struct TerminalSessionContent: View {
             if isTerminalVisible {
                 keyboardActive = true
             }
+        }
+        .onAppear {
+            // Picking up keyboard state across tab switches: if the keyboard
+            // was already visible when this session's content appeared (e.g.
+            // switching tabs), no keyboardWillShow will fire again.
+            softwareKeyboardVisible = TerminalKeyboardVisibility.shared.isVisible
         }
         // In-app WKWebView preview for URLs emitted by `minis-open` via
         // the OSC 1337 MinisOpenURL marker. `TerminalEmulator` parses the
@@ -557,7 +580,8 @@ class ISHTerminalViewModel: ObservableObject {
             let err = ISHKernel.shared.boot(withRootPath: rootPath)
             logger.info("[StartShell] boot: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - stepStart) * 1000))ms")
             if err < 0 {
-                let msg = "Failed to boot kernel: \(err)\r\n"
+                let msg = "Failed to boot kernel: \(err)\r\nRootfs: \(rootPath)/data\r\n" +
+                          "If the data directory is missing, reinstall or reselect a rootfs profile (Settings → Rootfs Management).\r\n"
                 if let data = msg.data(using: .utf8) {
                     emulator.feed(data)
                 }

@@ -405,7 +405,10 @@ static void handle_process_exit(struct task *task, int code) {
     _dataPath = [rootPath stringByAppendingPathComponent:@"data"];
     err = mount_root(&fakefs, _dataPath.fileSystemRepresentation);
     if (err < 0) {
-        NSLog(@"ISHKernel: mount_root failed: %d", err);
+        // -2 == _ENOENT: the data directory (or a path component) doesn't
+        // exist. Log the exact path so a stale profile selection is obvious.
+        NSLog(@"ISHKernel: mount_root failed: %d (%s) for data path %@",
+              err, strerror(-err), _dataPath.path);
         return err;
     }
     NSLog(@"ISHKernel: Root filesystem mounted at %@", _dataPath);

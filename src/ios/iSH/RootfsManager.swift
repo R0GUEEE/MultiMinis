@@ -50,12 +50,15 @@ class RootfsManager {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    /// The directory name of the active profile.
+    /// The directory name of the active profile. Only accepts profiles that
+    /// are actually bootable (data/ + meta.db + valid arch tag) — a stale or
+    /// half-imported selection silently falls back to the bundled Alpine so
+    /// boot can never fail with a missing data directory.
     private var activeProfileName: String {
         get {
             if let stored = UserDefaults.standard.string(forKey: Self.activeProfileKey),
                !stored.isEmpty,
-               FileManager.default.fileExists(atPath: profilesRoot.appendingPathComponent(stored).path) {
+               isRootfsInstalled(at: profilesRoot.appendingPathComponent(stored)) {
                 return stored
             }
             return Self.bundledProfileName
@@ -73,7 +76,7 @@ class RootfsManager {
         return rootfsPath.appendingPathComponent("data")
     }
 
-    /// Names of every installed rootfs profile.
+    /// Names of every installed (bootable) rootfs profile.
     var installedProfiles: [String] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: profilesRoot.path) else { return [] }
@@ -81,10 +84,7 @@ class RootfsManager {
             let dir = profilesRoot.appendingPathComponent(name)
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { return nil }
-            // A profile is a directory that contains a valid meta.db + data/.
-            guard fm.fileExists(atPath: dir.appendingPathComponent("meta.db").path),
-                  fm.fileExists(atPath: dir.appendingPathComponent("data").path) else { return nil }
-            return name
+            return isRootfsInstalled(at: dir) ? name : nil
         }.sorted()
     }
 
@@ -206,6 +206,12 @@ class RootfsManager {
     ///   - displayName: A human label for the new profile.
     ///   - activate: If true, make the imported rootfs the active profile.
     /// - Returns: The new profile name on success.
+    ///
+    /// The whole import is staged under tmp and only moved into Documents on
+    /// success, so an interrupted import (app suspended mid-extraction) can
+    /// never leave a half-baked profile behind — which would otherwise show up
+    /// in the list and fail to boot with "kernel boot failed -2" (the kernel
+    /// can't mount a profile whose data/ is missing).
     @discardableResult
     func importFromTarGz(sourceURL: URL, displayName: String, activate: Bool = false) throws -> String {
         let fm = FileManager.default
@@ -219,28 +225,37 @@ class RootfsManager {
         }
 
         let profileRoot = profilesRoot.appendingPathComponent(profileName)
-        let dataDir = profileRoot.appendingPathComponent("data")
+
+        // Stage: build the complete profile (data/ + meta.db + .arch) in tmp.
+        let stagingRoot = fm.temporaryDirectory
+            .appendingPathComponent("rootfs-import-stage-\(UUID().uuidString)", isDirectory: true)
+        let stagingData = stagingRoot.appendingPathComponent("data")
+        defer { try? fm.removeItem(at: stagingRoot) }
 
         let decompressed = try RootfsArchiveDecompressor.decompress(url: sourceURL)
         let tarData = decompressed.data
 
         do {
-            try fm.createDirectory(at: dataDir, withIntermediateDirectories: true, attributes: nil)
-            try initializeFakefsDatabase(at: profileRoot)
-            try extractTarIntoDataDir(tarData: tarData, dataDir: dataDir, databaseRoot: profileRoot)
+            try fm.createDirectory(at: stagingData, withIntermediateDirectories: true, attributes: nil)
+            try initializeFakefsDatabase(at: stagingRoot)
+            try extractTarIntoDataDir(tarData: tarData, dataDir: stagingData, databaseRoot: stagingRoot)
+            try currentArch.write(to: archTagPath(for: stagingRoot), atomically: true, encoding: .utf8)
         } catch {
-            try? fm.removeItem(at: profileRoot)
             throw error
         }
 
-        try currentArch.write(to: archTagPath(for: profileRoot), atomically: true, encoding: .utf8)
-
-        guard isRootfsInstalled(at: profileRoot) else {
-            try? fm.removeItem(at: profileRoot)
+        guard isRootfsInstalled(at: stagingRoot) else {
             throw ImportError.noBootableRootfs
         }
 
-        finalizeImportedRootfs(at: dataDir)
+        // Move the finished profile into place atomically-ish.
+        do {
+            try fm.moveItem(at: stagingRoot, to: profileRoot)
+        } catch {
+            throw ImportError.io("Could not finalize import: \(error.localizedDescription)")
+        }
+
+        finalizeImportedRootfs(at: profileRoot.appendingPathComponent("data"))
         print("RootfsManager: Imported rootfs profile '\(profileName)' from \(sourceURL.lastPathComponent)")
 
         if activate {

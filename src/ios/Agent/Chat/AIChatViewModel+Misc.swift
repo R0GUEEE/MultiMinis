@@ -28,7 +28,12 @@ extension AIChatViewModel {
                     let kernelElapsed = (CFAbsoluteTimeGetCurrent() - kernelStart) * 1000
                     logger.info("[KernelBoot] kernel boot call: \(String(format: "%.1f", kernelElapsed))ms")
                     if err < 0 {
-                        kernelStatus = .failed("Kernel boot failed: \(err)")
+                        // err == -2 (ENOENT) means the active profile's data/
+                        // directory is missing. The active-profile getter now
+                        // validates installability, so this is usually a stale
+                        // selection — surface the path so it's actionable.
+                        kernelStatus = .failed("Kernel boot failed: \(err) (rootfs: \(rootPath)/data). " +
+                                               "If the data directory is missing, reinstall or reselect the rootfs in Settings → Rootfs Management.")
                         return
                     }
                     // Wire fakefs change events into the iCloud Sync v2
